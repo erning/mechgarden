@@ -35,17 +35,18 @@ class MotionController(
 
     /** Orbit ([centerX], [centerY]) in [dir] (+1 clockwise seen from the center),
      * wall-smoothed: travel perpendicular to the center→us line, nudged by the
-     * distancing tilt. */
+     * distancing tilt toward [targetRange]. */
     fun orbit(
         centerX: Double,
         centerY: Double,
         dir: Int,
+        targetRange: Double,
         maxSpeed: Double = Kinematics.MAX_VELOCITY,
         distance: Double = DRIVE_DISTANCE,
     ) {
         val centerToUs = Angles.absoluteBearing(centerX, centerY, bot.x, bot.y)
         val range = hypot(bot.x - centerX, bot.y - centerY)
-        val desired = centerToUs + dir * (90.0 + Distancing.tilt(range))
+        val desired = centerToUs + dir * (90.0 + Distancing.tilt(range, targetRange))
         val go = WallSmoothing.smoothedHeading(bot.x, bot.y, desired, dir > 0, bot.battleFieldWidth, bot.battleFieldHeight)
         driveAlong(go, maxSpeed, distance)
     }

@@ -20,7 +20,7 @@ class ShieldAimSelector {
         EDGE_RIGHT(+1),
     }
 
-    private val rewards = PerShotRewards(Profile.values().size, PRIOR_WEIGHT, PRIOR_REWARD)
+    private val rewards = PerShotRewards(PROFILES.size, PRIOR_WEIGHT, PRIOR_REWARD)
     private var shieldSelections = 0L
 
     fun beginRound() {
@@ -81,6 +81,7 @@ class ShieldAimSelector {
         private const val PRIOR_WEIGHT = 2.0
         private const val HIT_BULLET_PENALTY = 1.6
         private val EDGE_PROFILES = arrayOf(Profile.EDGE_LEFT, Profile.EDGE_RIGHT)
+        private val PROFILES = Profile.values()
 
         private val perEnemy = HashMap<String, ShieldAimSelector>()
 

@@ -89,11 +89,12 @@ class DcGun(
     ) {
         val distance = (features[0] * 1200.0).coerceAtLeast(Kinematics.HALF_BOT)
         val halfBotWidthGf = Math.toDegrees(atan(Kinematics.HALF_BOT / distance)) / maxEscapeDeg
-        val ownedFeatures = features.copyOf()
-        val profileGuessFactors = predictAllProfileGfs(ownedFeatures, halfBotWidthGf)
+        val profileGuessFactors = predictAllProfileGfs(features, halfBotWidthGf)
+        // Adopt the caller's array directly — Gun builds a fresh feature vector
+        // every scan and doesn't retain or mutate it, so no defensive copy is needed.
         pending +=
             Pending(
-                ownedFeatures,
+                features,
                 fireX,
                 fireY,
                 fireTime,
@@ -196,8 +197,9 @@ class DcGun(
             return activeProfileIndex
         }
 
+        val activeRate = profileRate(activeProfileIndex)
         var bestIndex = activeProfileIndex
-        var bestRate = profileRate(activeProfileIndex)
+        var bestRate = activeRate
         for (i in PROFILES.indices) {
             val rate = profileRate(i)
             if (rate > bestRate) {
@@ -206,7 +208,6 @@ class DcGun(
             }
         }
 
-        val activeRate = profileRate(activeProfileIndex)
         if (bestIndex != activeProfileIndex && bestRate > activeRate + PROFILE_SWITCH_MARGIN) {
             activeProfileIndex = bestIndex
         }
@@ -318,28 +319,8 @@ class DcGun(
             }
         }
         val halfWindow = (halfBotWidthGf * mid).roundToInt().coerceIn(0, mid)
-        var best = mid
-        var bestMass = windowMass(histBuf, mid, halfWindow)
-        for (i in histBuf.indices) {
-            val mass = windowMass(histBuf, i, halfWindow)
-            if (mass > bestMass) {
-                bestMass = mass
-                best = i
-            }
-        }
+        val best = peakGfBin(histBuf, mid, halfWindow)
         return (best - mid).toDouble() / mid
-    }
-
-    private fun windowMass(
-        hist: DoubleArray,
-        center: Int,
-        halfWindow: Int,
-    ): Double {
-        var sum = 0.0
-        for (i in (center - halfWindow).coerceAtLeast(0)..(center + halfWindow).coerceAtMost(hist.size - 1)) {
-            sum += hist[i]
-        }
-        return sum
     }
 
     companion object {

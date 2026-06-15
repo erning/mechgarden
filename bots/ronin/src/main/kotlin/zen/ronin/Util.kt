@@ -135,21 +135,24 @@ object WallSmoothing {
 /**
  * Distancing — the inward/outward tilt on the orbit heading so we hold a preferred
  * engagement range while surfing. Positive tilt closes distance, negative opens it.
+ *
+ * The live range is owned by the controller (Ronin) and threaded in as a parameter;
+ * this object is stateless, like [Angles] and [Kinematics].
  */
 object Distancing {
     /** Default engagement range for orbiting duelists (Fencer, SandboxDT, …). */
     const val BASE_TARGET = 450.0
 
-    /** Live engagement range — adapted per-opponent by the main controller based on
-     * the enemy's radial (advancing) velocity: a charging opponent pushes this up
-     * (keep distance), a kiting opponent pushes it down (close in). Duelists that
-     * orbit at ~constant range leave it at [BASE_TARGET]. */
-    var targetRange = BASE_TARGET
-
     private const val GAIN = 55.0
     private const val MAX_TILT = 22.0
 
-    fun tilt(distance: Double): Double = ((distance / targetRange - 1.0) * GAIN).coerceIn(-MAX_TILT, MAX_TILT)
+    /** Tilt toward [targetRange]: positive closes distance, negative opens it. The
+     * controller adapts [targetRange] per scan from the enemy's advancing velocity
+     * (a charger pushes it up — keep distance; a kiter pushes it down — close in). */
+    fun tilt(
+        distance: Double,
+        targetRange: Double,
+    ): Double = ((distance / targetRange - 1.0) * GAIN).coerceIn(-MAX_TILT, MAX_TILT)
 }
 
 /**
@@ -183,6 +186,44 @@ fun gfToBin(
     guessFactor: Double,
     mid: Int,
 ): Int = (mid + Math.round(guessFactor.coerceIn(-1.0, 1.0) * mid)).toInt()
+
+/** Mass held in the ±[halfWindow] bin window around [center] (clamped to the
+ * histogram bounds). Shared by the DC gun and the GF guns' peak-find. */
+fun windowMass(
+    hist: DoubleArray,
+    center: Int,
+    halfWindow: Int,
+): Double {
+    var sum = 0.0
+    val hi = (center + halfWindow).coerceAtMost(hist.size - 1)
+    var i = (center - halfWindow).coerceAtLeast(0)
+    while (i <= hi) {
+        sum += hist[i]
+        i++
+    }
+    return sum
+}
+
+/** Index of the bin whose ±[halfWindow] window holds the most mass; the center bin
+ * [mid] wins ties and the all-empty case (head-on fallback). The single peak-find
+ * used by the DC gun and the GF guns. */
+fun peakGfBin(
+    hist: DoubleArray,
+    mid: Int,
+    halfWindow: Int,
+): Int {
+    var best = mid
+    var bestMass = windowMass(hist, mid, halfWindow)
+    for (i in hist.indices) {
+        if (i == mid) continue
+        val mass = windowMass(hist, i, halfWindow)
+        if (mass > bestMass) {
+            bestMass = mass
+            best = i
+        }
+    }
+    return best
+}
 
 /**
  * Shared feature-bucketing for the gun segmentation and the surf-danger ensemble —

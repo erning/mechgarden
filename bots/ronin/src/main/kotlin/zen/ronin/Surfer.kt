@@ -20,7 +20,6 @@ class Surfer {
     private var danger: DangerModel = DangerModel()
     private var lastDir = 1
     private val rng = java.util.Random()
-    var profile = MovementProfileSelector.Profile.BASE
 
     /** Choose and drive this tick's dodge. */
     fun surf(
@@ -31,6 +30,8 @@ class Surfer {
         motion: MotionController,
         fieldWidth: Double,
         fieldHeight: Double,
+        profile: MovementProfileSelector.Profile,
+        targetRange: Double,
     ) {
         // Nearest two not-yet-arrived waves in a single pass (no list allocation).
         var incoming: EnemyWave? = null
@@ -51,7 +52,7 @@ class Surfer {
             }
         }
         if (incoming == null) {
-            if (enemy != null) motion.orbit(enemy.x, enemy.y, lastDir)
+            if (enemy != null) motion.orbit(enemy.x, enemy.y, lastDir, targetRange)
             return
         }
 
@@ -62,10 +63,10 @@ class Surfer {
         var bestDir = lastDir
         var bestCost = Double.MAX_VALUE
         for (dir in intArrayOf(1, -1)) {
-            val end = predictArrival(incoming, self, dir, now, fieldWidth, fieldHeight)
+            val end = predictArrival(incoming, self, dir, now, fieldWidth, fieldHeight, targetRange)
             var c = waveDanger(incoming, end.x, end.y)
             if (second != null) {
-                val end2 = predictArrival(second, self, dir, now, fieldWidth, fieldHeight)
+                val end2 = predictArrival(second, self, dir, now, fieldWidth, fieldHeight, targetRange)
                 c += profile.secondWaveDiscount * waveDanger(second, end2.x, end2.y)
             }
             c += profile.wallWeight * wallRisk(end.x, end.y, fieldWidth, fieldHeight)
@@ -94,7 +95,7 @@ class Surfer {
         }
 
         lastDir = bestDir
-        motion.orbit(incoming.sourceX, incoming.sourceY, bestDir)
+        motion.orbit(incoming.sourceX, incoming.sourceY, bestDir, targetRange)
     }
 
     /** Adopt [name]'s per-enemy danger model (call before any stat is used). */
@@ -147,7 +148,8 @@ class Surfer {
 
     /** Roll our orbit ([dir]) forward, wall-smoothed, until [wave]'s front reaches
      * us. Inlines [Kinematics.step] with its defaults (max speed, no distance
-     * brake) into locals so the ~30–70-tick loop allocates nothing per tick. */
+     * brake) into locals so the ~30–70-tick loop allocates nothing per tick. The
+     * arrival test compares squared distances to skip a sqrt per tick. */
     private fun predictArrival(
         wave: EnemyWave,
         from: Kinematics.Pose,
@@ -155,16 +157,19 @@ class Surfer {
         now: Long,
         fieldWidth: Double,
         fieldHeight: Double,
+        targetRange: Double,
     ): Kinematics.Pose {
         var x = from.x
         var y = from.y
         var heading = from.headingDeg
         var velocity = from.velocity
         var ticks = 0
+        val sourceX = wave.sourceX
+        val sourceY = wave.sourceY
         while (ticks < MAX_TICKS) {
-            val centerToUs = Angles.absoluteBearing(wave.sourceX, wave.sourceY, x, y)
-            val range = hypot(x - wave.sourceX, y - wave.sourceY)
-            val tilted = centerToUs + dir * (90.0 + Distancing.tilt(range))
+            val centerToUs = Angles.absoluteBearing(sourceX, sourceY, x, y)
+            val range = hypot(x - sourceX, y - sourceY)
+            val tilted = centerToUs + dir * (90.0 + Distancing.tilt(range, targetRange))
             val desired = WallSmoothing.smoothedHeading(x, y, tilted, dir > 0, fieldWidth, fieldHeight)
             // Kinematics.step(pose, desired) inlined (maxSpeed = MAX, distance = ∞):
             var angle = Angles.normalizeRelative(desired - heading)
@@ -180,7 +185,8 @@ class Surfer {
             x += kotlin.math.sin(rad) * velocity
             y += Math.cos(rad) * velocity
             ticks++
-            if (wave.radius(now + ticks) >= hypot(x - wave.sourceX, y - wave.sourceY)) break
+            val reach = wave.velocity * (now + ticks - wave.fireTime)
+            if (reach * reach >= (x - sourceX) * (x - sourceX) + (y - sourceY) * (y - sourceY)) break
         }
         return Kinematics.Pose(x, y, heading, velocity)
     }
@@ -196,13 +202,16 @@ class Surfer {
         val heading = from.headingDeg
         var velocity = from.velocity
         var ticks = 0
+        val sourceX = wave.sourceX
+        val sourceY = wave.sourceY
         while (ticks < MAX_TICKS) {
             velocity = brakeVelocity(velocity)
             val rad = Math.toRadians(heading)
             x += kotlin.math.sin(rad) * velocity
             y += Math.cos(rad) * velocity
             ticks++
-            if (wave.radius(now + ticks) >= hypot(x - wave.sourceX, y - wave.sourceY)) break
+            val reach = wave.velocity * (now + ticks - wave.fireTime)
+            if (reach * reach >= (x - sourceX) * (x - sourceX) + (y - sourceY) * (y - sourceY)) break
         }
         return Kinematics.Pose(x, y, heading, velocity)
     }

@@ -78,28 +78,8 @@ class GfGun(
     ): Double {
         val histogram = table[segment]
         val halfWindow = (halfBotWidthGf * mid).roundToInt().coerceIn(0, mid)
-        var best = mid
-        var bestMass = windowMass(histogram, mid, halfWindow)
-        for (i in histogram.indices) {
-            val mass = windowMass(histogram, i, halfWindow)
-            if (mass > bestMass) {
-                bestMass = mass
-                best = i
-            }
-        }
+        val best = peakGfBin(histogram, mid, halfWindow)
         return (best - mid).toDouble() / mid
-    }
-
-    private fun windowMass(
-        histogram: DoubleArray,
-        center: Int,
-        halfWindow: Int,
-    ): Double {
-        var sum = 0.0
-        for (i in (center - halfWindow).coerceAtLeast(0)..(center + halfWindow).coerceAtMost(histogram.size - 1)) {
-            sum += histogram[i]
-        }
-        return sum
     }
 
     private class GfWave(
@@ -125,14 +105,14 @@ class GfGun(
 class VirtualGuns {
     enum class Aim { HEAD_ON, LINEAR, CIRCULAR, GF_DISTLAT, GF_ROLL, GF_ACCEL, GF_WALL, GF_DC }
 
-    private val score = DoubleArray(Aim.values().size)
+    private val score = DoubleArray(AIM.size)
     private var attempts = 0.0
     private val ourWaves = mutableListOf<OurWave>()
 
     fun best(): Aim {
         var best = Aim.CIRCULAR
         var most = score[Aim.CIRCULAR.ordinal]
-        for (aim in Aim.values()) {
+        for (aim in AIM) {
             if (score[aim.ordinal] > most) {
                 most = score[aim.ordinal]
                 best = aim
@@ -150,7 +130,9 @@ class VirtualGuns {
         bulletSpeed: Double,
         anglesByAim: DoubleArray,
     ) {
-        ourWaves += OurWave(fireX, fireY, fireTime, bulletSpeed, anglesByAim.copyOf())
+        // Adopt the caller's array — Gun builds it fresh per shot and doesn't retain
+        // or mutate it, so no defensive copy is needed.
+        ourWaves += OurWave(fireX, fireY, fireTime, bulletSpeed, anglesByAim)
     }
 
     fun update(
@@ -165,7 +147,7 @@ class VirtualGuns {
             if (w.radius(now) < d) continue
             val actual = Angles.absoluteBearing(w.fireX, w.fireY, enemyX, enemyY)
             val tolerance = Math.toDegrees(kotlin.math.atan(Kinematics.HALF_BOT / d))
-            for (aim in Aim.values()) {
+            for (aim in AIM) {
                 val hit = if (kotlin.math.abs(Angles.normalizeRelative(w.angles[aim.ordinal] - actual)) < tolerance) 1.0 else 0.0
                 score[aim.ordinal] = score[aim.ordinal] * RETAIN + hit
             }
@@ -188,5 +170,8 @@ class VirtualGuns {
         const val PRIOR_RATE = 0.4
         const val PRIOR_WEIGHT = 10.0
         const val RETAIN = 0.998
+
+        /** Cached enum array — iterating this avoids the per-call clone of Aim.values(). */
+        private val AIM = Aim.values()
     }
 }

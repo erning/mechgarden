@@ -49,7 +49,7 @@ class FirePowerSelector {
         ),
     }
 
-    private val rewards = PerShotRewards(Profile.values().size, PRIOR_WEIGHT, PRIOR_REWARD)
+    private val rewards = PerShotRewards(PROFILES.size, PRIOR_WEIGHT, PRIOR_REWARD)
 
     fun beginRound() {
         rewards.beginRound()
@@ -87,7 +87,7 @@ class FirePowerSelector {
     }
 
     private fun explorationProfile(): Profile? {
-        for (profile in Profile.values()) {
+        for (profile in PROFILES) {
             if (rewards.shotCount(profile.ordinal) < EXPLORE_SHOTS) return profile
         }
         return null
@@ -96,7 +96,7 @@ class FirePowerSelector {
     private fun bestProfile(): Profile {
         var best = Profile.BALANCED
         var bestReward = rewards.rewardPerShot(best.ordinal)
-        for (profile in Profile.values()) {
+        for (profile in PROFILES) {
             val candidate = rewards.rewardPerShot(profile.ordinal)
             if (candidate > bestReward) {
                 best = profile
@@ -112,6 +112,8 @@ class FirePowerSelector {
         private const val PRIOR_WEIGHT = 4.0
         private const val HIT_BULLET_COST_SCALE = 0.35
 
+        /** Cached enum array — avoids the per-call clone of Profile.values(). */
+        private val PROFILES = Profile.values()
         private val perEnemy = HashMap<String, FirePowerSelector>()
 
         fun forEnemy(name: String): FirePowerSelector = perEnemy.getOrPut(name) { FirePowerSelector() }

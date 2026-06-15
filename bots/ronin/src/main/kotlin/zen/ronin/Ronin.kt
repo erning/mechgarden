@@ -34,7 +34,13 @@ abstract class Ronin : AdvancedRobot() {
     private var loaded = false
     private var enemyName = ""
     private var movementSelector = MovementProfileSelector()
+    private var movementProfile = MovementProfileSelector.Profile.BASE
     private var damageThisRound = 0.0
+
+    /** Live engagement range — adapted per scan from the enemy's advancing velocity
+     * (charger → keep distance, kiter → close in) and threaded into the surfer and
+     * motion. Per-opponent, persisted across the per-round rebuild. */
+    private var targetRange = Distancing.BASE_TARGET
 
     /** Last clear orbit sense of our motion relative to the enemy's gun — held
      * when our lateral speed is too small to give a reliable sign. */
@@ -114,7 +120,7 @@ abstract class Ronin : AdvancedRobot() {
         if (firePower != null) tracker.recordEnemyFire(firePower)
 
         // Passage bookkeeping: learn fully-passed waves as precise-interval visits.
-        waves.sweep(time, x, y).forEach { surfer.learnVisit(it, x, y) }
+        waves.sweep(time, x, y) { surfer.learnVisit(it, x, y) }
 
         // Gun: adaptive lead + fire gate. A real bullet casts shadows on waves in flight.
         val fired = gun.fireControl(tracker, battleFieldWidth, battleFieldHeight)
@@ -126,10 +132,10 @@ abstract class Ronin : AdvancedRobot() {
         // weak-gun chargers like RaikoNano/BlestPain that approach but shouldn't
         // be met with weaker bullets).
         smoothAdvancing = smoothAdvancing * 0.9 + tracker.advancingVelocity * 0.1
-        Distancing.targetRange = (Distancing.BASE_TARGET + RANGE_GAIN * smoothAdvancing).coerceIn(RANGE_LO, RANGE_HI)
+        targetRange = (Distancing.BASE_TARGET + RANGE_GAIN * smoothAdvancing).coerceIn(RANGE_LO, RANGE_HI)
 
         val selfPose = Kinematics.Pose(x, y, heading, velocity)
-        surfer.surf(time, selfPose, tracker.enemy, waves.active, motion, battleFieldWidth, battleFieldHeight)
+        surfer.surf(time, selfPose, tracker.enemy, waves.active, motion, battleFieldWidth, battleFieldHeight, movementProfile, targetRange)
 
         // Speed history for the next wave's accel feature.
         speedTwoAgo = speedOneAgo
@@ -164,23 +170,16 @@ abstract class Ronin : AdvancedRobot() {
 
     override fun onRoundEnded(event: RoundEndedEvent) {
         movementSelector.recordDamage(damageThisRound)
-        if (enemyName.isNotEmpty()) {
-            perEnemyParams.getOrPut(enemyName) { doubleArrayOf(Distancing.BASE_TARGET, DC_POWER_FLOOR_BASE) }.also {
-                it[0] = Distancing.targetRange
-                it[1] = gun.dcPowerFloor
-            }
-        }
+        if (enemyName.isNotEmpty()) perEnemyParams[enemyName] = targetRange
     }
 
     private fun adoptEnemy(name: String) {
         enemyName = name
         surfer.adoptEnemy(name)
         movementSelector = MovementProfileSelector.forEnemy(name)
-        surfer.profile = movementSelector.profileForRound()
+        movementProfile = movementSelector.profileForRound()
         gun.adoptEnemy(name)
-        val params = perEnemyParams.getOrPut(name) { doubleArrayOf(Distancing.BASE_TARGET, DC_POWER_FLOOR_BASE) }
-        Distancing.targetRange = params[0]
-        gun.dcPowerFloor = params[1]
+        targetRange = perEnemyParams.getOrPut(name) { Distancing.BASE_TARGET }
     }
 
     private companion object {
@@ -188,11 +187,9 @@ abstract class Ronin : AdvancedRobot() {
         const val RANGE_GAIN = 8.0
         const val RANGE_LO = 380.0
         const val RANGE_HI = 540.0
-        const val DC_POWER_FLOOR_BASE = 1.2
 
-        /** Per-opponent engagement params [targetRange, dcPowerFloor]. Survives the
-         *  per-round robot rebuild (statics), so subsequent rounds in the same
-         *  battle can reuse the current values directly. */
-        private val perEnemyParams = HashMap<String, DoubleArray>()
+        /** Per-opponent engagement range, surviving the per-round robot rebuild
+         *  (statics) so subsequent rounds in the same battle reuse the last value. */
+        private val perEnemyParams = HashMap<String, Double>()
     }
 }

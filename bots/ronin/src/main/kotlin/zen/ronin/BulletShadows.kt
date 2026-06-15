@@ -69,7 +69,7 @@ class BulletShadows {
         bullet: Bullet,
         now: Long,
     ) {
-        val i = shots.indexOfFirst { it.bullet == bullet }
+        val i = shots.indexOfFirst { it.bullet === bullet }
         if (i < 0) return
         val shot = shots.removeAt(i)
         for (c in shot.casts) if (c.crossTime > now) c.wave.removeShadow(c.lowGf, c.highGf)
@@ -77,7 +77,7 @@ class BulletShadows {
 
     /** Our [bullet] reached a wall: the full path was flown, every cast stands. */
     fun onBulletGone(bullet: Bullet) {
-        shots.removeAll { it.bullet == bullet }
+        shots.removeAll { it.bullet === bullet }
     }
 
     /**

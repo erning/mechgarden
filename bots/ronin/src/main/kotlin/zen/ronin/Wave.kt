@@ -158,8 +158,8 @@ class EnemyWaveTracker {
         now: Long,
         px: Double,
         py: Double,
-    ): List<EnemyWave> {
-        val done = mutableListOf<EnemyWave>()
+        onPassed: (EnemyWave) -> Unit,
+    ) {
         val iter = waves.iterator()
         while (iter.hasNext()) {
             val w = iter.next()
@@ -167,11 +167,10 @@ class EnemyWaveTracker {
             val r = w.radius(now)
             if (r >= d - Kinematics.HALF_BOT) w.cover(px, py)
             if (r >= d + Kinematics.HALF_BOT) {
-                done += w
+                onPassed(w)
                 iter.remove()
             }
         }
-        return done
     }
 
     fun matchBullet(
@@ -180,12 +179,18 @@ class EnemyWaveTracker {
         py: Double,
         bulletVelocity: Double,
     ): EnemyWave? {
-        val match =
-            waves
-                .filter { abs(it.velocity - bulletVelocity) < SPEED_TOLERANCE }
-                .minByOrNull { abs(it.radius(now) - hypot(px - it.sourceX, py - it.sourceY)) }
-        if (match != null) waves.remove(match)
-        return match
+        var best: EnemyWave? = null
+        var bestDiff = Double.MAX_VALUE
+        for (w in waves) {
+            if (abs(w.velocity - bulletVelocity) >= SPEED_TOLERANCE) continue
+            val diff = abs(w.radius(now) - hypot(px - w.sourceX, py - w.sourceY))
+            if (diff < bestDiff) {
+                bestDiff = diff
+                best = w
+            }
+        }
+        if (best != null) waves.remove(best)
+        return best
     }
 
     private companion object {

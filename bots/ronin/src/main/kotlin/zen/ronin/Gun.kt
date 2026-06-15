@@ -34,11 +34,6 @@ class Gun(
     private var shieldAimSelector = ShieldAimSelector()
     private val turret = Turret(bot)
 
-    /** Minimum DC-gun firepower — adapted per-opponent by the main controller: a
-     * charging opponent lowers this (more shadows / economy to survive), a kiting
-     * opponent raises it (more damage). Duelists leave it at the base 1.2. */
-    var dcPowerFloor = DC_POWER_FLOOR_BASE
-
     /** Smoothed enemy lateral speed — the surfer-detection signal. High (>5)
      * means the enemy orbits consistently → likely a surfer that reacts to real
      * bullets only → tick waves are misleading → reduce their weight. */
@@ -78,7 +73,7 @@ class Gun(
         // weak bullets that can't finish.
         val evPower = choosePower(vguns.hitRate(aim), tracker.distance)
         val energyLead = bot.energy - enemy.energy
-        val tieredFloor = if (energyLead > ENERGY_LEAD_THRESHOLD) AGGRESSIVE_FLOOR else dcPowerFloor
+        val tieredFloor = if (energyLead > ENERGY_LEAD_THRESHOLD) AGGRESSIVE_FLOOR else DC_POWER_FLOOR_BASE
         val baseFloor = if (aim == VirtualGuns.Aim.GF_DC) tieredFloor else Rules.MIN_BULLET_POWER
         val powerProfile = firePowerSelector.selectProfile()
         val power = capPower(firePowerSelector.apply(powerProfile, evPower, baseFloor), bot.energy, enemy.energy)
@@ -103,20 +98,14 @@ class Gun(
                 tracker.timeSinceDirectionChange,
             )
 
-        val angles =
-            doubleArrayOf(
-                ctx.directAngleDeg, // HEAD_ON
-                leadAim(ctx, false, fieldWidth, fieldHeight), // LINEAR
-                leadAim(ctx, true, fieldWidth, fieldHeight), // CIRCULAR
-                gfGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, distLatSeg, halfBotGf), // GF_DISTLAT
-                gfRollGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, distLatSeg, halfBotGf), // GF_ROLL
-                gfAccelGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, accelSeg, halfBotGf), // GF_ACCEL
-                gfWallGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, wallSeg, halfBotGf), // GF_WALL
-                dcGun.aim(dcFeat, ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, halfBotGf), // GF_DC
-            )
-
         val shieldAimProfile = shieldAimSelector.select(tracker.shieldLikely)
-        val selectedAngle = applyShieldAimProfile(angles[aim.ordinal], shieldAimProfile, ctx.distance)
+        // Only the aim we'd actually fire is needed to track the turret every scan;
+        // the full virtual-gun array is built lazily below, just for the firing tick
+        // — so the linear/circular leads and the other GF peaks don't run on the
+        // ~90% of scans where the gun is cooling down and won't fire.
+        val rawSelected =
+            angleForAim(aim, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight)
+        val selectedAngle = applyShieldAimProfile(rawSelected, shieldAimProfile, ctx.distance)
 
         val gunTurn = turret.aimAt(selectedAngle)
         val tolerance = Math.toDegrees(atan(Kinematics.HALF_BOT / ctx.distance))
@@ -126,7 +115,13 @@ class Gun(
         if (bot.gunHeat == 0.0 && aligned && affordable && fresh && ctx.power >= Rules.MIN_BULLET_POWER) {
             val bullet = turret.fire(ctx.power)
             if (bullet != null) {
-                vguns.onFire(ctx.sourceX, ctx.sourceY, bot.time, ctx.bulletSpeed, angles)
+                vguns.onFire(
+                    ctx.sourceX,
+                    ctx.sourceY,
+                    bot.time,
+                    ctx.bulletSpeed,
+                    anglesForVguns(aim, rawSelected, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight),
+                )
                 trainFiredGuns(ctx, distLatSeg, accelSeg, wallSeg)
                 dcGun.onFire(
                     dcFeat,
@@ -145,6 +140,56 @@ class Gun(
         }
         trainTickWave(ctx, distLatSeg, wallSeg, tickWeight)
         return null
+    }
+
+    /** The single candidate angle for [aim] — cheap to call every scan for turret
+     * tracking. Mirrors the [VirtualGuns.Aim] order used by [anglesForVguns]. */
+    private fun angleForAim(
+        aim: VirtualGuns.Aim,
+        ctx: ShotContext,
+        dcFeat: DoubleArray,
+        distLatSeg: Int,
+        accelSeg: Int,
+        wallSeg: Int,
+        halfBotGf: Double,
+        fieldWidth: Double,
+        fieldHeight: Double,
+    ): Double =
+        when (aim) {
+            VirtualGuns.Aim.HEAD_ON -> ctx.directAngleDeg
+            VirtualGuns.Aim.LINEAR -> leadAim(ctx, false, fieldWidth, fieldHeight)
+            VirtualGuns.Aim.CIRCULAR -> leadAim(ctx, true, fieldWidth, fieldHeight)
+            VirtualGuns.Aim.GF_DISTLAT -> gfGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, distLatSeg, halfBotGf)
+            VirtualGuns.Aim.GF_ROLL -> gfRollGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, distLatSeg, halfBotGf)
+            VirtualGuns.Aim.GF_ACCEL -> gfAccelGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, accelSeg, halfBotGf)
+            VirtualGuns.Aim.GF_WALL -> gfWallGun.aim(ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, wallSeg, halfBotGf)
+            VirtualGuns.Aim.GF_DC -> dcGun.aim(dcFeat, ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, halfBotGf)
+        }
+
+    /** Full per-aim angle set for virtual-gun scoring, reusing the already-computed
+     * [rawSelected] at its slot so the (expensive) DC KNN isn't recomputed. */
+    private fun anglesForVguns(
+        aim: VirtualGuns.Aim,
+        rawSelected: Double,
+        ctx: ShotContext,
+        dcFeat: DoubleArray,
+        distLatSeg: Int,
+        accelSeg: Int,
+        wallSeg: Int,
+        halfBotGf: Double,
+        fieldWidth: Double,
+        fieldHeight: Double,
+    ): DoubleArray {
+        val out = DoubleArray(AIM.size)
+        for (a in AIM) {
+            out[a.ordinal] =
+                if (a == aim) {
+                    rawSelected
+                } else {
+                    angleForAim(a, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight)
+                }
+        }
+        return out
     }
 
     /** Learn a real shot into every statistical gun at its own segment. */
@@ -306,13 +351,12 @@ class Gun(
         baseHitRate: Double,
         distance: Double,
     ): Double {
-        val refEscape = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(REF_POWER))
-        val distanceFactor = (atan(Kinematics.HALF_BOT / distance) / atan(Kinematics.HALF_BOT / REF_DISTANCE)).coerceIn(0.0, 2.0)
+        val distanceFactor = (atan(Kinematics.HALF_BOT / distance) / REF_HALF_ANGLE).coerceIn(0.0, 2.0)
         var best = Rules.MIN_BULLET_POWER
         var bestValue = -Double.MAX_VALUE
         for (power in CANDIDATE_POWERS) {
             val escape = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(power))
-            val pHit = (baseHitRate * refEscape / escape * distanceFactor).coerceIn(0.0, 1.0)
+            val pHit = (baseHitRate * REF_ESCAPE / escape * distanceFactor).coerceIn(0.0, 1.0)
             val value = (pHit * Rules.getBulletDamage(power) - (1.0 - pHit) * power) / (1.0 + power / 5.0)
             if (value > bestValue) {
                 bestValue = value
@@ -365,6 +409,14 @@ class Gun(
         const val FIRE_STALE_TICKS = 6L
         const val SHIELD_EDGE_OFFSET = 12.0
         val CANDIDATE_POWERS = doubleArrayOf(0.1, 0.5, 1.0, 1.5, 2.0, 3.0)
+
+        // Escape angle and half-bot angle at the reference power/distance — factored
+        // out of choosePower so the per-scan loop doesn't recompute them.
+        private val REF_ESCAPE = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(REF_POWER))
+        private val REF_HALF_ANGLE = atan(Kinematics.HALF_BOT / REF_DISTANCE)
+
+        /** Cached enum array — iterating this avoids the per-call clone of Aim.values(). */
+        private val AIM = VirtualGuns.Aim.values()
     }
 }
 

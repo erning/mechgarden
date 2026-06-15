@@ -50,8 +50,8 @@ class MovementProfileSelector {
         ),
     }
 
-    private val rounds = LongArray(Profile.values().size)
-    private val damage = DoubleArray(Profile.values().size)
+    private val rounds = LongArray(PROFILES.size)
+    private val damage = DoubleArray(PROFILES.size)
     private var roundsDecided = 0L
 
     var chosen: Profile = Profile.BASE
@@ -71,10 +71,9 @@ class MovementProfileSelector {
     }
 
     private fun explorationProfile(): Profile? {
-        val profiles = Profile.values()
-        val start = (roundsDecided % profiles.size).toInt()
-        for (offset in profiles.indices) {
-            val profile = profiles[(start + offset) % profiles.size]
+        val start = (roundsDecided % PROFILES.size).toInt()
+        for (offset in PROFILES.indices) {
+            val profile = PROFILES[(start + offset) % PROFILES.size]
             if (rounds[profile.ordinal] < EXPLORE_ROUNDS) return profile
         }
         return null
@@ -83,7 +82,7 @@ class MovementProfileSelector {
     private fun bestProfile(): Profile {
         var best = Profile.BASE
         var bestDamage = damagePerRound(best)
-        for (profile in Profile.values()) {
+        for (profile in PROFILES) {
             val candidate = damagePerRound(profile)
             if (candidate < bestDamage) {
                 best = profile
@@ -103,6 +102,8 @@ class MovementProfileSelector {
         private const val DAMAGE_PRIOR = 30.0
         private const val DAMAGE_PRIOR_WEIGHT = 2.0
 
+        /** Cached enum array — avoids the per-call clone of Profile.values(). */
+        private val PROFILES = Profile.values()
         private val perEnemy = HashMap<String, MovementProfileSelector>()
 
         fun forEnemy(name: String): MovementProfileSelector = perEnemy.getOrPut(name) { MovementProfileSelector() }

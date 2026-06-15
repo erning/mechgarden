@@ -92,9 +92,11 @@ and local to its own package.
   from real bullet damage taken at round end.
 - `ShieldAimSelector` is active only when `EnemyTracker.shieldLikely` is true;
   it explores left/right edge aim and scores real edge-shot outcomes.
-- `Distancing.targetRange` adapts per scan from the enemy's advancing velocity.
-  `Gun.dcPowerFloor` remains a per-opponent in-memory economy floor; energy
-  leads are handled by the gun's per-shot tiered floor.
+- The engagement range (`targetRange`, a Ronin-owned field persisted per
+  opponent) adapts per scan from the enemy's advancing velocity and is threaded
+  into the surfer/motion; `Distancing` is stateless. The economy firepower floor
+  is the constant `Gun.DC_POWER_FLOOR_BASE`; energy leads are handled by the
+  gun's per-shot tiered floor.
 - The DC gun's KNN uses a three-way quickselect (not a full sort) for O(n)
   nearest-neighbour selection; the `scoreBuf`/`histBuf` arrays are reused
   across scans (no per-scan allocation).

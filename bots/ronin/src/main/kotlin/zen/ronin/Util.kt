@@ -4,7 +4,6 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Neutral geometry + movement-physics helpers for Ronin (Robocode frame: +x east,
@@ -46,6 +45,10 @@ object Kinematics {
     const val MAX_VELOCITY = 8.0
     const val ACCELERATION = 1.0
     const val DECELERATION = 2.0
+
+    /** Half the bot's hull width (px) — the shared geometry constant for escape
+     * envelopes, aim tolerance, shadow bands, and hull-crossing tests. */
+    const val HALF_BOT = 18.0
 
     /** Max body turn this tick (degrees), given the current speed. */
     fun maxTurnRateDeg(velocity: Double): Double = 10.0 - 0.75 * abs(velocity)
@@ -90,38 +93,6 @@ object Kinematics {
         val headingDeg: Double,
         val velocity: Double,
     )
-
-    /** Advance [pose] one tick steering toward [goHeadingDeg], reversing when that
-     * faces the goal with less turning. Engine order: turn, accelerate, move. */
-    fun step(
-        pose: Pose,
-        goHeadingDeg: Double,
-        maxSpeed: Double = MAX_VELOCITY,
-        remainingDistance: Double = Double.POSITIVE_INFINITY,
-    ): Pose {
-        var angle = Angles.normalizeRelative(goHeadingDeg - pose.headingDeg)
-        var driveSign = 1
-        if (abs(angle) > 90.0) {
-            angle = Angles.normalizeRelative(angle + 180.0)
-            driveSign = -1
-        }
-        val maxTurn = maxTurnRateDeg(pose.velocity)
-        val heading = Angles.normalizeAbsolute(pose.headingDeg + angle.coerceIn(-maxTurn, maxTurn))
-        val velocity = nextVelocity(pose.velocity, driveSign, maxSpeed, remainingDistance)
-        val rad = Math.toRadians(heading)
-        return Pose(pose.x + sin(rad) * velocity, pose.y + cos(rad) * velocity, heading, velocity)
-    }
-
-    /** Simulate [ticks] ticks, each steering toward the heading [goHeadingAt] returns. */
-    fun predict(
-        from: Pose,
-        ticks: Int,
-        goHeadingAt: (Pose) -> Double,
-    ): Pose {
-        var p = from
-        repeat(ticks) { p = step(p, goHeadingAt(p)) }
-        return p
-    }
 }
 
 /**
@@ -130,9 +101,7 @@ object Kinematics {
  * crashing. Angles degrees clockwise from north; orbit sense given by [clockwise].
  */
 object WallSmoothing {
-    private const val HALF_BOT = 18.0
-
-    const val DEFAULT_MARGIN = HALF_BOT + 22.0
+    const val DEFAULT_MARGIN = Kinematics.HALF_BOT + 22.0
     const val DEFAULT_STICK = 140.0
     private const val STEP_DEG = 8.0
     private const val MAX_STEPS = 45
@@ -183,10 +152,66 @@ object Distancing {
     fun tilt(distance: Double): Double = ((distance / targetRange - 1.0) * GAIN).coerceIn(-MAX_TILT, MAX_TILT)
 }
 
-/** Euclidean distance. */
-fun dist(
-    x1: Double,
-    y1: Double,
-    x2: Double,
-    y2: Double,
-): Double = sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2))
+/**
+ * Distance the point ([x], [y]) can travel along [headingDeg] before reaching a
+ * wall of the [fieldWidth]×[fieldHeight] field (0 if already outside / degenerate).
+ * Shared by the tracker and the wave-feature sampler.
+ */
+fun distanceToWall(
+    x: Double,
+    y: Double,
+    headingDeg: Double,
+    fieldWidth: Double,
+    fieldHeight: Double,
+): Double {
+    val rad = Math.toRadians(headingDeg)
+    val dx = sin(rad)
+    val dy = cos(rad)
+    var d = Double.MAX_VALUE
+    if (dx > WALL_EPS) d = minOf(d, (fieldWidth - x) / dx)
+    if (dx < -WALL_EPS) d = minOf(d, -x / dx)
+    if (dy > WALL_EPS) d = minOf(d, (fieldHeight - y) / dy)
+    if (dy < -WALL_EPS) d = minOf(d, -y / dy)
+    return if (d == Double.MAX_VALUE) 0.0 else d.coerceAtLeast(0.0)
+}
+
+private const val WALL_EPS = 1e-9
+
+/** Guess factor → histogram bin index for a profile whose center bin is [mid]
+ * (bin count `2*mid+1`). The single source for the GF↔bin mapping. */
+fun gfToBin(
+    guessFactor: Double,
+    mid: Int,
+): Int = (mid + Math.round(guessFactor.coerceIn(-1.0, 1.0) * mid)).toInt()
+
+/**
+ * Shared feature-bucketing for the gun segmentation and the surf-danger ensemble —
+ * one source of truth for the bucket boundaries both layers slice on.
+ */
+object Segments {
+    const val ACCEL_EPS = 0.5
+
+    fun dist3(d: Double): Int = (d / 200.0).toInt().coerceIn(0, 2)
+
+    fun dist5(d: Double): Int = (d / 160.0).toInt().coerceIn(0, 4)
+
+    fun lat3(lat: Double): Int = (lat / Kinematics.MAX_VELOCITY * 3).toInt().coerceIn(0, 2)
+
+    fun lat5(lat: Double): Int = (lat / Kinematics.MAX_VELOCITY * 5).toInt().coerceIn(0, 4)
+
+    fun wall3(ratio: Double): Int =
+        when {
+            ratio < 0.5 -> 0
+            ratio < 1.0 -> 1
+            else -> 2
+        }
+
+    fun accel3(sign: Int): Int = sign + 1
+
+    fun accelSign(deltaSpeed: Double): Int =
+        when {
+            deltaSpeed > ACCEL_EPS -> 1
+            deltaSpeed < -ACCEL_EPS -> -1
+            else -> 0
+        }
+}

@@ -44,7 +44,6 @@ abstract class Ronin : AdvancedRobot() {
      * needs |v(t−2)| (the speed before its fire-time snapshot). */
     private var speedOneAgo = 0.0
     private var speedTwoAgo = 0.0
-    private var velocityOneAgo = 0.0
     private var smoothAdvancing = 0.0
 
     override fun run() {
@@ -135,7 +134,6 @@ abstract class Ronin : AdvancedRobot() {
         // Speed history for the next wave's accel feature.
         speedTwoAgo = speedOneAgo
         speedOneAgo = abs(velocity)
-        velocityOneAgo = velocity
     }
 
     override fun onBulletHit(event: BulletHitEvent) {

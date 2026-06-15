@@ -1,5 +1,6 @@
 package zen.ronin
 
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.hypot
@@ -19,8 +20,6 @@ class WaveFeatures(
     val wallForwardRatio: Double,
 ) {
     companion object {
-        const val ACCEL_EPS = 0.5
-
         @Suppress("kotlin:S107") // fire-time snapshot has that many inputs by nature
         fun at(
             us: Snapshot,
@@ -34,39 +33,13 @@ class WaveFeatures(
             val sourceToUs = Angles.absoluteBearing(sourceX, sourceY, us.x, us.y)
             val lateral = us.velocity * sin(Math.toRadians(us.headingDeg - sourceToUs))
             val distance = hypot(us.x - sourceX, us.y - sourceY)
-            val dSpeed = kotlin.math.abs(us.velocity) - prevSpeedAbs
-            val accelSign =
-                when {
-                    dSpeed > ACCEL_EPS -> 1
-                    dSpeed < -ACCEL_EPS -> -1
-                    else -> 0
-                }
+            val accelSign = Segments.accelSign(abs(us.velocity) - prevSpeedAbs)
             val travelHeading = if (us.velocity >= 0.0) us.headingDeg else us.headingDeg + 180.0
             val wallSpace = distanceToWall(us.x, us.y, travelHeading, fieldWidth, fieldHeight)
             val flightTicks = (distance / bulletSpeed).coerceAtLeast(1.0)
             val wallTicks = wallSpace / Kinematics.MAX_VELOCITY
-            return WaveFeatures(distance, kotlin.math.abs(lateral), accelSign, wallTicks / flightTicks)
+            return WaveFeatures(distance, abs(lateral), accelSign, wallTicks / flightTicks)
         }
-
-        private fun distanceToWall(
-            x: Double,
-            y: Double,
-            headingDeg: Double,
-            fieldWidth: Double,
-            fieldHeight: Double,
-        ): Double {
-            val rad = Math.toRadians(headingDeg)
-            val dx = sin(rad)
-            val dy = Math.cos(rad)
-            var d = Double.MAX_VALUE
-            if (dx > EPS) d = min(d, (fieldWidth - x) / dx)
-            if (dx < -EPS) d = min(d, -x / dx)
-            if (dy > EPS) d = min(d, (fieldHeight - y) / dy)
-            if (dy < -EPS) d = min(d, -y / dy)
-            return if (d == Double.MAX_VALUE) 0.0 else d.coerceAtLeast(0.0)
-        }
-
-        private const val EPS = 1e-9
     }
 }
 
@@ -128,7 +101,7 @@ class EnemyWave(
         py: Double,
     ): Boolean = radius(now) >= hypot(px - sourceX, py - sourceY)
 
-    fun hullHalfGf(distance: Double): Double = Math.toDegrees(atan(HALF_BOT / distance)) / maxEscapeDeg
+    fun hullHalfGf(distance: Double): Double = Math.toDegrees(atan(Kinematics.HALF_BOT / distance)) / maxEscapeDeg
 
     fun cover(
         px: Double,
@@ -164,10 +137,6 @@ class EnemyWave(
         val offset = Angles.normalizeRelative(bearing - directAngleDeg)
         return (offset / maxEscapeDeg * orbitDirection).coerceIn(-1.0, 1.0)
     }
-
-    private companion object {
-        const val HALF_BOT = 18.0
-    }
 }
 
 /**
@@ -196,8 +165,8 @@ class EnemyWaveTracker {
             val w = iter.next()
             val d = hypot(px - w.sourceX, py - w.sourceY)
             val r = w.radius(now)
-            if (r >= d - HULL_RADIUS) w.cover(px, py)
-            if (r >= d + HULL_RADIUS) {
+            if (r >= d - Kinematics.HALF_BOT) w.cover(px, py)
+            if (r >= d + Kinematics.HALF_BOT) {
                 done += w
                 iter.remove()
             }
@@ -213,14 +182,13 @@ class EnemyWaveTracker {
     ): EnemyWave? {
         val match =
             waves
-                .filter { kotlin.math.abs(it.velocity - bulletVelocity) < SPEED_TOLERANCE }
-                .minByOrNull { kotlin.math.abs(it.radius(now) - hypot(px - it.sourceX, py - it.sourceY)) }
+                .filter { abs(it.velocity - bulletVelocity) < SPEED_TOLERANCE }
+                .minByOrNull { abs(it.radius(now) - hypot(px - it.sourceX, py - it.sourceY)) }
         if (match != null) waves.remove(match)
         return match
     }
 
     private companion object {
         const val SPEED_TOLERANCE = 0.5
-        const val HULL_RADIUS = 18.0
     }
 }

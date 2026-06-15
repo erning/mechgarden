@@ -133,24 +133,6 @@ class EnemyTracker {
         if (power <= LOW_POWER_FIRE_MAX) ticksSinceLowPowerFire = 0L
     }
 
-    private fun distanceToWall(
-        x: Double,
-        y: Double,
-        headingDeg: Double,
-        fieldWidth: Double,
-        fieldHeight: Double,
-    ): Double {
-        val rad = Math.toRadians(headingDeg)
-        val dx = sin(rad)
-        val dy = cos(rad)
-        var d = Double.MAX_VALUE
-        if (dx > EPS) d = minOf(d, (fieldWidth - x) / dx)
-        if (dx < -EPS) d = minOf(d, -x / dx)
-        if (dy > EPS) d = minOf(d, (fieldHeight - y) / dy)
-        if (dy < -EPS) d = minOf(d, -y / dy)
-        return if (d == Double.MAX_VALUE) 0.0 else d.coerceAtLeast(0.0)
-    }
-
     private companion object {
         const val MAX_DT = 8L
         const val LATERAL_EPS = 0.5
@@ -158,7 +140,6 @@ class EnemyTracker {
         const val SHIELD_STATIONARY_TICKS = 8L
         const val LOW_POWER_FIRE_MAX = 0.35
         const val LOW_POWER_RECENT_TICKS = 30L
-        const val EPS = 1e-9
     }
 }
 

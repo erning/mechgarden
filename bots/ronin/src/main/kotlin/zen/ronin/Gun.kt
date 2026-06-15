@@ -2,6 +2,7 @@ package zen.ronin
 
 import robocode.AdvancedRobot
 import robocode.Rules
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan
 import kotlin.math.hypot
@@ -83,20 +84,20 @@ class Gun(
         val power = capPower(firePowerSelector.apply(powerProfile, evPower, baseFloor), bot.energy, enemy.energy)
         val ctx = context(tracker, enemy, power)
 
-        val distLatSeg = distLatSegment(ctx.distance, kotlin.math.abs(ctx.lateralSpeed))
-        val accelSeg = velAccelSegment(kotlin.math.abs(ctx.lateralSpeed), ctx.accel)
+        val distLatSeg = distLatSegment(ctx.distance, abs(ctx.lateralSpeed))
+        val accelSeg = velAccelSegment(abs(ctx.lateralSpeed), ctx.accel)
         val wallSeg = distLatSeg * 3 + wallSegment(tracker.forwardWallSpace, ctx.distance, ctx.bulletSpeed)
-        val halfBotGf = Math.toDegrees(atan(HALF_BOT / ctx.distance)) / ctx.maxEscapeDeg
+        val halfBotGf = Math.toDegrees(atan(Kinematics.HALF_BOT / ctx.distance)) / ctx.maxEscapeDeg
 
         // Adapt tick-wave weight: surfers (high smooth lateral) get reduced weight
         // (they only react to real bullets); non-adaptive movers keep full weight.
-        smoothLat = smoothLat * 0.95 + kotlin.math.abs(ctx.lateralSpeed) * 0.05
+        smoothLat = smoothLat * 0.95 + abs(ctx.lateralSpeed) * 0.05
         val tickWeight = if (smoothLat > SURFER_LAT_GATE) REDUCED_TICK_WEIGHT else TICK_WAVE_WEIGHT
         val dcFeat =
             dcGun.features(
                 ctx.distance,
-                kotlin.math.abs(ctx.lateralSpeed),
-                kotlin.math.abs(ctx.advancingSpeed),
+                abs(ctx.lateralSpeed),
+                abs(ctx.advancingSpeed),
                 ctx.accel,
                 (tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (ctx.distance / ctx.bulletSpeed).coerceAtLeast(1.0),
                 tracker.timeSinceDirectionChange,
@@ -118,22 +119,15 @@ class Gun(
         val selectedAngle = applyShieldAimProfile(angles[aim.ordinal], shieldAimProfile, ctx.distance)
 
         val gunTurn = turret.aimAt(selectedAngle)
-        val tolerance = Math.toDegrees(atan(HALF_BOT / ctx.distance))
-        val aligned = kotlin.math.abs(gunTurn) < tolerance
+        val tolerance = Math.toDegrees(atan(Kinematics.HALF_BOT / ctx.distance))
+        val aligned = abs(gunTurn) < tolerance
         val affordable = ctx.power <= bot.energy - ENERGY_RESERVE
         val fresh = tracker.scanAge(bot.time) <= FIRE_STALE_TICKS
         if (bot.gunHeat == 0.0 && aligned && affordable && fresh && ctx.power >= Rules.MIN_BULLET_POWER) {
             val bullet = turret.fire(ctx.power)
             if (bullet != null) {
                 vguns.onFire(ctx.sourceX, ctx.sourceY, bot.time, ctx.bulletSpeed, angles)
-                for ((gf, seg) in listOf(
-                    gfGun to distLatSeg,
-                    gfRollGun to distLatSeg,
-                    gfAccelGun to accelSeg,
-                    gfWallGun to wallSeg,
-                )) {
-                    gf.onFire(ctx.sourceX, ctx.sourceY, bot.time, ctx.bulletSpeed, ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, seg)
-                }
+                trainFiredGuns(ctx, distLatSeg, accelSeg, wallSeg)
                 dcGun.onFire(
                     dcFeat,
                     ctx.sourceX,
@@ -148,26 +142,74 @@ class Gun(
                 shieldAimSelector.onFire(shieldAimProfile, ctx.power)
             }
             return bullet
-        } else {
-            // Tick wave: dense training data against non-adaptive movers (they
-            // can't see whether a bullet left). A fraction of a real shot's
-            // weight, into the all-time guns only — the rolling gun keeps
-            // learning from real bullets alone, since surfers react to those.
-            for ((gf, seg) in listOf(gfGun to distLatSeg, gfWallGun to wallSeg)) {
-                gf.onFire(
-                    ctx.sourceX,
-                    ctx.sourceY,
-                    bot.time,
-                    ctx.bulletSpeed,
-                    ctx.directAngleDeg,
-                    ctx.orbitSign,
-                    ctx.maxEscapeDeg,
-                    seg,
-                    tickWeight,
-                )
-            }
         }
+        trainTickWave(ctx, distLatSeg, wallSeg, tickWeight)
         return null
+    }
+
+    /** Learn a real shot into every statistical gun at its own segment. */
+    private fun trainFiredGuns(
+        ctx: ShotContext,
+        distLatSeg: Int,
+        accelSeg: Int,
+        wallSeg: Int,
+    ) {
+        gfGun.onFire(ctx.sourceX, ctx.sourceY, bot.time, ctx.bulletSpeed, ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, distLatSeg)
+        gfRollGun.onFire(
+            ctx.sourceX,
+            ctx.sourceY,
+            bot.time,
+            ctx.bulletSpeed,
+            ctx.directAngleDeg,
+            ctx.orbitSign,
+            ctx.maxEscapeDeg,
+            distLatSeg,
+        )
+        gfAccelGun.onFire(
+            ctx.sourceX,
+            ctx.sourceY,
+            bot.time,
+            ctx.bulletSpeed,
+            ctx.directAngleDeg,
+            ctx.orbitSign,
+            ctx.maxEscapeDeg,
+            accelSeg,
+        )
+        gfWallGun.onFire(ctx.sourceX, ctx.sourceY, bot.time, ctx.bulletSpeed, ctx.directAngleDeg, ctx.orbitSign, ctx.maxEscapeDeg, wallSeg)
+    }
+
+    /** Tick wave: dense training data against non-adaptive movers (they can't see
+     * whether a bullet left). A fraction of a real shot's weight, into the all-time
+     * guns only — the rolling gun keeps learning from real bullets alone, since
+     * surfers react to those. */
+    private fun trainTickWave(
+        ctx: ShotContext,
+        distLatSeg: Int,
+        wallSeg: Int,
+        weight: Double,
+    ) {
+        gfGun.onFire(
+            ctx.sourceX,
+            ctx.sourceY,
+            bot.time,
+            ctx.bulletSpeed,
+            ctx.directAngleDeg,
+            ctx.orbitSign,
+            ctx.maxEscapeDeg,
+            distLatSeg,
+            weight,
+        )
+        gfWallGun.onFire(
+            ctx.sourceX,
+            ctx.sourceY,
+            bot.time,
+            ctx.bulletSpeed,
+            ctx.directAngleDeg,
+            ctx.orbitSign,
+            ctx.maxEscapeDeg,
+            wallSeg,
+            weight,
+        )
     }
 
     fun recordBulletHit(power: Double) {
@@ -183,25 +225,6 @@ class Gun(
     fun recordBulletHitBullet(power: Double) {
         firePowerSelector.recordHitBullet(power)
         shieldAimSelector.recordHitBullet(power)
-    }
-
-    fun snapshot(): DoubleArray =
-        vguns.snapshot() + gfGun.snapshot() + gfRollGun.snapshot() + gfAccelGun.snapshot() + gfWallGun.snapshot() +
-            dcGun.snapshotObs(DC_PERSIST_COUNT)
-
-    fun restore(data: DoubleArray) {
-        val v = vguns.snapshotSize()
-        val g = gfGun.snapshotSize()
-        val w = gfWallGun.snapshotSize()
-        val fixed = v + 3 * g + w
-        if (data.size < fixed) return
-        vguns.restore(data.copyOfRange(0, v))
-        gfGun.restore(data.copyOfRange(v, v + g))
-        gfRollGun.restore(data.copyOfRange(v + g, v + 2 * g))
-        gfAccelGun.restore(data.copyOfRange(v + 2 * g, v + 3 * g))
-        gfWallGun.restore(data.copyOfRange(v + 3 * g, fixed))
-        // DC observations (appended after the fixed-size gun data, if present).
-        if (data.size > fixed) dcGun.restoreObs(data.copyOfRange(fixed, data.size))
     }
 
     private fun context(
@@ -230,27 +253,12 @@ class Gun(
     private fun distLatSegment(
         distance: Double,
         lateralSpeedAbs: Double,
-    ): Int {
-        val d = (distance / 200.0).toInt().coerceIn(0, 2)
-        val l = (lateralSpeedAbs / Kinematics.MAX_VELOCITY * 3).toInt().coerceIn(0, 2)
-        return d * 3 + l
-    }
+    ): Int = Segments.dist3(distance) * 3 + Segments.lat3(lateralSpeedAbs)
 
     private fun velAccelSegment(
         lateralSpeedAbs: Double,
         accel: Double,
-    ): Int {
-        val v = (lateralSpeedAbs / Kinematics.MAX_VELOCITY * 3).toInt().coerceIn(0, 2)
-        val a =
-            if (accel > ACCEL_EPS) {
-                2
-            } else if (accel < -ACCEL_EPS) {
-                0
-            } else {
-                1
-            }
-        return v * 3 + a
-    }
+    ): Int = Segments.lat3(lateralSpeedAbs) * 3 + Segments.accel3(Segments.accelSign(accel))
 
     private fun wallSegment(
         forwardWallSpace: Double,
@@ -259,12 +267,7 @@ class Gun(
     ): Int {
         val flightTicks = distance / bulletSpeed
         val wallTicks = forwardWallSpace / Kinematics.MAX_VELOCITY
-        val ratio = wallTicks / flightTicks.coerceAtLeast(1.0)
-        return when {
-            ratio < 0.5 -> 0
-            ratio < 1.0 -> 1
-            else -> 2
-        }
+        return Segments.wall3(wallTicks / flightTicks.coerceAtLeast(1.0))
     }
 
     /** Iterative lead: project the enemy to the bullet's impact tick. [circular]
@@ -289,8 +292,8 @@ class Gun(
             repeat(ticks) {
                 heading = Angles.normalizeAbsolute(heading + omega)
                 val rad = Math.toRadians(heading)
-                x = (x + sin(rad) * ctx.enemy.velocity).coerceIn(HALF_BOT, fieldWidth - HALF_BOT)
-                y = (y + Math.cos(rad) * ctx.enemy.velocity).coerceIn(HALF_BOT, fieldHeight - HALF_BOT)
+                x = (x + sin(rad) * ctx.enemy.velocity).coerceIn(Kinematics.HALF_BOT, fieldWidth - Kinematics.HALF_BOT)
+                y = (y + Math.cos(rad) * ctx.enemy.velocity).coerceIn(Kinematics.HALF_BOT, fieldHeight - Kinematics.HALF_BOT)
             }
             px = x
             py = y
@@ -304,7 +307,7 @@ class Gun(
         distance: Double,
     ): Double {
         val refEscape = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(REF_POWER))
-        val distanceFactor = (atan(HALF_BOT / distance) / atan(HALF_BOT / REF_DISTANCE)).coerceIn(0.0, 2.0)
+        val distanceFactor = (atan(Kinematics.HALF_BOT / distance) / atan(Kinematics.HALF_BOT / REF_DISTANCE)).coerceIn(0.0, 2.0)
         var best = Rules.MIN_BULLET_POWER
         var bestValue = -Double.MAX_VALUE
         for (power in CANDIDATE_POWERS) {
@@ -340,19 +343,17 @@ class Gun(
         distance: Double,
     ): Double {
         if (profile == ShieldAimSelector.Profile.CENTER) return baseAngleDeg
-        val offsetDeg = Math.toDegrees(atan(SHIELD_EDGE_OFFSET / distance.coerceAtLeast(HALF_BOT)))
+        val offsetDeg = Math.toDegrees(atan(SHIELD_EDGE_OFFSET / distance.coerceAtLeast(Kinematics.HALF_BOT)))
         return Angles.normalizeAbsolute(baseAngleDeg + profile.edgeSign * offsetDeg)
     }
 
     private companion object {
-        const val HALF_BOT = 18.0
         const val ENERGY_RESERVE = 0.1
         const val ENERGY_DIVISOR = 4.0
         const val MAX_ITERATIONS = 8
         const val REF_POWER = 2.0
         const val DC_PRIMARY_MIN = 45
         const val DC_POWER_FLOOR_BASE = 1.2
-        const val DC_PERSIST_COUNT = 1000
         const val ENERGY_LEAD_THRESHOLD = 20.0
         const val AGGRESSIVE_FLOOR = 2.0
         const val REF_DISTANCE = 500.0
@@ -361,7 +362,6 @@ class Gun(
         const val TICK_WAVE_WEIGHT = 0.5
         const val REDUCED_TICK_WEIGHT = 0.1
         const val SURFER_LAT_GATE = 5.0
-        const val ACCEL_EPS = 0.5
         const val FIRE_STALE_TICKS = 6L
         const val SHIELD_EDGE_OFFSET = 12.0
         val CANDIDATE_POWERS = doubleArrayOf(0.1, 0.5, 1.0, 1.5, 2.0, 3.0)

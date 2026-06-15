@@ -87,8 +87,8 @@ class DcGun(
         orbitSign: Int,
         maxEscapeDeg: Double,
     ) {
-        val distance = (features[0] * 1200.0).coerceAtLeast(HALF_BOT)
-        val halfBotWidthGf = Math.toDegrees(atan(HALF_BOT / distance)) / maxEscapeDeg
+        val distance = (features[0] * 1200.0).coerceAtLeast(Kinematics.HALF_BOT)
+        val halfBotWidthGf = Math.toDegrees(atan(Kinematics.HALF_BOT / distance)) / maxEscapeDeg
         val ownedFeatures = features.copyOf()
         val profileGuessFactors = predictAllProfileGfs(ownedFeatures, halfBotWidthGf)
         pending +=
@@ -128,37 +128,6 @@ class DcGun(
 
     /** Number of resolved observations available for the KNN query. */
     fun size(): Int = obs.size
-
-    /** Snapshot the most recent [maxItems] observations (7 doubles each:
-     * 6 features + gf). */
-    fun snapshotObs(maxItems: Int): DoubleArray {
-        val count = minOf(maxItems, obs.size)
-        val out = DoubleArray(count * 7)
-        val start = obs.size - count
-        for (i in 0 until count) {
-            val o = obs[start + i]
-            System.arraycopy(o.features, 0, out, i * 7, 6)
-            out[i * 7 + 6] = o.gf
-        }
-        return out
-    }
-
-    /** Restore observations from a serialized [data] array (7 doubles each). Only
-     * runs on a cold start — if the static registry already carries data from
-     * earlier rounds this is a no-op. */
-    fun restoreObs(data: DoubleArray) {
-        if (obs.isNotEmpty() || data.isEmpty() || data.size % 7 != 0) return
-        val count = minOf(data.size / 7, CAP)
-        repeat(count) { i ->
-            val base = i * 7
-            obs.add(
-                Obs(
-                    doubleArrayOf(data[base], data[base + 1], data[base + 2], data[base + 3], data[base + 4], data[base + 5]),
-                    data[base + 6],
-                ),
-            )
-        }
-    }
 
     /** Candidate firing angle now: the K nearest past observations' guess-factor
      * mass, peaked over the bot-width window. Head-on if no data yet. */
@@ -342,7 +311,7 @@ class DcGun(
         for (j in 0 until kk) {
             val s = scoreBuf[j]
             val w = 1.0 / (s.d2 + KERNEL_SMOOTH)
-            val center = (mid + Math.round(s.gf.coerceIn(-1.0, 1.0) * mid)).toInt()
+            val center = gfToBin(s.gf, mid)
             for (i in histBuf.indices) {
                 val dd = (center - i).toDouble()
                 histBuf[i] += w / (dd * dd + 1.0)
@@ -376,7 +345,6 @@ class DcGun(
     companion object {
         const val CAP = 4000
         const val KERNEL_SMOOTH = 0.08
-        private const val HALF_BOT = 18.0
         private const val PROFILE_RETAIN = 0.985
         private const val PROFILE_PRIOR_SCORE = 0.25
         private const val PROFILE_PRIOR_WEIGHT = 25.0

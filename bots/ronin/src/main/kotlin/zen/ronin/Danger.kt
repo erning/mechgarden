@@ -18,7 +18,7 @@ class GuessFactorDanger(
     private val weight = DoubleArray(bins)
     private val mid = bins / 2
 
-    private fun index(guessFactor: Double): Int = (mid + Math.round(guessFactor.coerceIn(-1.0, 1.0) * mid)).toInt()
+    private fun index(guessFactor: Double): Int = gfToBin(guessFactor, mid)
 
     fun registerInterval(
         lowGf: Double,
@@ -59,12 +59,6 @@ class GuessFactorDanger(
 
     fun totalWeight(): Double = weight.sum()
 
-    fun snapshot(): DoubleArray = weight.copyOf()
-
-    fun restore(data: DoubleArray) {
-        if (data.size == weight.size) System.arraycopy(data, 0, weight, 0, weight.size)
-    }
-
     /** Per-bin normalized shares (each bin's fraction of the total observed weight;
      * zeros when empty) — the bake-time export. */
     fun shares(): DoubleArray {
@@ -82,22 +76,7 @@ class GuessFactorDanger(
     companion object {
         const val BINS = 47
 
-        fun binIndex(guessFactor: Double): Int {
-            val mid = BINS / 2
-            return (mid + Math.round(guessFactor.coerceIn(-1.0, 1.0) * mid)).toInt()
-        }
-
-        fun windowMean(
-            bins: DoubleArray,
-            lowGf: Double,
-            highGf: Double,
-        ): Double {
-            val lo = binIndex(min(lowGf, highGf))
-            val hi = binIndex(max(lowGf, highGf))
-            var sum = 0.0
-            for (i in lo..hi) sum += bins[i]
-            return sum / (hi - lo + 1)
-        }
+        fun binIndex(guessFactor: Double): Int = gfToBin(guessFactor, BINS / 2)
     }
 }
 
@@ -130,21 +109,24 @@ class DangerModel {
     private val ensemble =
         arrayOf(
             // All-time distance × lateral speed (the legacy fine view).
-            Buffer(9, 1.0, 1.0) { f -> dist3(f.distance) * 3 + lat3(f.lateralAbs) },
+            Buffer(9, 1.0, 1.0) { f -> Segments.dist3(f.distance) * 3 + Segments.lat3(f.lateralAbs) },
             // Lateral speed only, finer resolution.
-            Buffer(5, 1.0, 1.0) { f -> lat5(f.lateralAbs) },
+            Buffer(5, 1.0, 1.0) { f -> Segments.lat5(f.lateralAbs) },
             // Distance only, finer resolution.
-            Buffer(5, 1.0, 1.0) { f -> dist5(f.distance) },
+            Buffer(5, 1.0, 1.0) { f -> Segments.dist5(f.distance) },
             // Rolling lateral speed × acceleration — the gun's recent accel-correlated aim.
-            Buffer(9, ROLL_RETAIN, 1.0) { f -> lat3(f.lateralAbs) * 3 + accel3(f.accelSign) },
+            Buffer(9, ROLL_RETAIN, 1.0) { f -> Segments.lat3(f.lateralAbs) * 3 + Segments.accel3(f.accelSign) },
             // All-time lateral × forward-wall room.
-            Buffer(9, 1.0, 1.0) { f -> lat3(f.lateralAbs) * 3 + wall3(f.wallForwardRatio) },
+            Buffer(9, 1.0, 1.0) { f -> Segments.lat3(f.lateralAbs) * 3 + Segments.wall3(f.wallForwardRatio) },
             // High-dim all-time distance × lateral × wall room (weight 1.5).
-            Buffer(27, 1.0, 1.5) { f -> (dist3(f.distance) * 3 + lat3(f.lateralAbs)) * 3 + wall3(f.wallForwardRatio) },
+            Buffer(27, 1.0, 1.5) { f ->
+                (Segments.dist3(f.distance) * 3 + Segments.lat3(f.lateralAbs)) * 3 +
+                    Segments.wall3(f.wallForwardRatio)
+            },
             // High-dim all-time distance × lateral × acceleration (weight 1.5).
-            Buffer(27, 1.0, 1.5) { f -> (dist3(f.distance) * 3 + lat3(f.lateralAbs)) * 3 + accel3(f.accelSign) },
+            Buffer(27, 1.0, 1.5) { f -> (Segments.dist3(f.distance) * 3 + Segments.lat3(f.lateralAbs)) * 3 + Segments.accel3(f.accelSign) },
             // Rolling distance × lateral — recent range-based aim.
-            Buffer(9, ROLL_RETAIN, 1.0) { f -> dist3(f.distance) * 3 + lat3(f.lateralAbs) },
+            Buffer(9, ROLL_RETAIN, 1.0) { f -> Segments.dist3(f.distance) * 3 + Segments.lat3(f.lateralAbs) },
             // Single global profile — the always-relevant fallback view.
             Buffer(1, 1.0, 1.0) { _ -> 0 },
         )
@@ -208,47 +190,10 @@ class DangerModel {
         return out
     }
 
-    fun isWarm(): Boolean = coarse.totalWeight() > 0.0
-
-    /** Backbone snapshot (the all-time dist×lat 9 profiles + coarse). */
-    fun snapshot(): DoubleArray {
-        val per = coarse.snapshot().size
-        val fine = ensemble[0]
-        val out = DoubleArray((fine.segments + 1) * per)
-        for (s in 0 until fine.segments) System.arraycopy(fine.profiles[s].snapshot(), 0, out, s * per, per)
-        System.arraycopy(coarse.snapshot(), 0, out, fine.segments * per, per)
-        return out
-    }
-
-    fun restore(data: DoubleArray) {
-        val per = coarse.snapshot().size
-        val fine = ensemble[0]
-        if (data.size != (fine.segments + 1) * per) return
-        for (s in 0 until fine.segments) fine.profiles[s].restore(data.copyOfRange(s * per, (s + 1) * per))
-        coarse.restore(data.copyOfRange(fine.segments * per, (fine.segments + 1) * per))
-    }
-
     companion object {
         const val COARSE_RETAIN = 0.97
         const val ROLL_RETAIN = 0.96
         const val CONF_SCALE = 25.0
-
-        private fun dist3(d: Double): Int = (d / 200.0).toInt().coerceIn(0, 2)
-
-        private fun dist5(d: Double): Int = (d / 160.0).toInt().coerceIn(0, 4)
-
-        private fun lat3(lat: Double): Int = (lat / Kinematics.MAX_VELOCITY * 3).toInt().coerceIn(0, 2)
-
-        private fun lat5(lat: Double): Int = (lat / Kinematics.MAX_VELOCITY * 5).toInt().coerceIn(0, 4)
-
-        private fun accel3(sign: Int): Int = sign + 1
-
-        private fun wall3(ratio: Double): Int =
-            when {
-                ratio < 0.5 -> 0
-                ratio < 1.0 -> 1
-                else -> 2
-            }
 
         private val perEnemy = HashMap<String, DangerModel>()
 

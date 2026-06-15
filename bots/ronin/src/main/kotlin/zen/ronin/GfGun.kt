@@ -65,7 +65,7 @@ class GfGun(
         if (retain < 1.0) {
             for (i in histogram.indices) histogram[i] *= retain
         }
-        val center = (mid + Math.round(guessFactor.coerceIn(-1.0, 1.0) * mid)).toInt()
+        val center = gfToBin(guessFactor, mid)
         for (i in histogram.indices) {
             val d = (center - i).toDouble()
             histogram[i] += weight / (d * d + 1.0)
@@ -100,19 +100,6 @@ class GfGun(
             sum += histogram[i]
         }
         return sum
-    }
-
-    fun snapshotSize(): Int = table.size * bins
-
-    fun snapshot(): DoubleArray {
-        val out = DoubleArray(snapshotSize())
-        for (s in table.indices) System.arraycopy(table[s], 0, out, s * bins, bins)
-        return out
-    }
-
-    fun restore(data: DoubleArray) {
-        if (data.size != snapshotSize()) return
-        for (s in table.indices) System.arraycopy(data, s * bins, table[s], 0, bins)
     }
 
     private class GfWave(
@@ -177,7 +164,7 @@ class VirtualGuns {
             val d = hypot(enemyX - w.fireX, enemyY - w.fireY)
             if (w.radius(now) < d) continue
             val actual = Angles.absoluteBearing(w.fireX, w.fireY, enemyX, enemyY)
-            val tolerance = Math.toDegrees(kotlin.math.atan(HALF_BOT / d))
+            val tolerance = Math.toDegrees(kotlin.math.atan(Kinematics.HALF_BOT / d))
             for (aim in Aim.values()) {
                 val hit = if (kotlin.math.abs(Angles.normalizeRelative(w.angles[aim.ordinal] - actual)) < tolerance) 1.0 else 0.0
                 score[aim.ordinal] = score[aim.ordinal] * RETAIN + hit
@@ -185,20 +172,6 @@ class VirtualGuns {
             attempts = attempts * RETAIN + 1.0
             iter.remove()
         }
-    }
-
-    fun snapshotSize(): Int = score.size + 1
-
-    fun snapshot(): DoubleArray =
-        DoubleArray(score.size + 1).also { out ->
-            System.arraycopy(score, 0, out, 0, score.size)
-            out[score.size] = attempts
-        }
-
-    fun restore(data: DoubleArray) {
-        if (data.size != snapshotSize()) return
-        System.arraycopy(data, 0, score, 0, score.size)
-        attempts = data[score.size]
     }
 
     private class OurWave(
@@ -212,7 +185,6 @@ class VirtualGuns {
     }
 
     private companion object {
-        const val HALF_BOT = 18.0
         const val PRIOR_RATE = 0.4
         const val PRIOR_WEIGHT = 10.0
         const val RETAIN = 0.998

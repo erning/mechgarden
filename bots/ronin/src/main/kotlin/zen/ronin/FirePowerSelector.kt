@@ -1,7 +1,6 @@
 package zen.ronin
 
 import robocode.Rules
-import kotlin.math.abs
 
 /**
  * Per-opponent, per-shot selector over firepower profiles.
@@ -49,17 +48,10 @@ class FirePowerSelector {
         ),
     }
 
-    private data class PendingShot(
-        val profile: Profile,
-        val power: Double,
-    )
-
-    private val shots = LongArray(Profile.values().size)
-    private val reward = DoubleArray(Profile.values().size)
-    private val pending = mutableListOf<PendingShot>()
+    private val rewards = PerShotRewards(Profile.values().size, PRIOR_WEIGHT, PRIOR_REWARD)
 
     fun beginRound() {
-        pending.clear()
+        rewards.beginRound()
     }
 
     fun selectProfile(): Profile = explorationProfile() ?: bestProfile()
@@ -78,45 +70,33 @@ class FirePowerSelector {
         profile: Profile,
         power: Double,
     ) {
-        pending += PendingShot(profile, power)
+        rewards.onFire(profile.ordinal, power)
     }
 
     fun recordHit(power: Double) {
-        complete(power, Rules.getBulletDamage(power) - power)
+        rewards.complete(power, Rules.getBulletDamage(power) - power)
     }
 
     fun recordMiss(power: Double) {
-        complete(power, -power)
+        rewards.complete(power, -power)
     }
 
     fun recordHitBullet(power: Double) {
-        complete(power, -power * HIT_BULLET_COST_SCALE)
-    }
-
-    private fun complete(
-        power: Double,
-        outcomeReward: Double,
-    ) {
-        val index = pending.indexOfFirst { abs(it.power - power) <= POWER_EPS }
-        if (index < 0) return
-        val shot = pending.removeAt(index)
-        val profileIndex = shot.profile.ordinal
-        shots[profileIndex]++
-        reward[profileIndex] += outcomeReward
+        rewards.complete(power, -power * HIT_BULLET_COST_SCALE)
     }
 
     private fun explorationProfile(): Profile? {
         for (profile in Profile.values()) {
-            if (shots[profile.ordinal] < EXPLORE_SHOTS) return profile
+            if (rewards.shotCount(profile.ordinal) < EXPLORE_SHOTS) return profile
         }
         return null
     }
 
     private fun bestProfile(): Profile {
         var best = Profile.BALANCED
-        var bestReward = rewardPerShot(best)
+        var bestReward = rewards.rewardPerShot(best.ordinal)
         for (profile in Profile.values()) {
-            val candidate = rewardPerShot(profile)
+            val candidate = rewards.rewardPerShot(profile.ordinal)
             if (candidate > bestReward) {
                 best = profile
                 bestReward = candidate
@@ -125,17 +105,11 @@ class FirePowerSelector {
         return best
     }
 
-    private fun rewardPerShot(profile: Profile): Double {
-        val index = profile.ordinal
-        return (reward[index] + PRIOR_WEIGHT * PRIOR_REWARD) / (shots[index] + PRIOR_WEIGHT)
-    }
-
     companion object {
         const val EXPLORE_SHOTS = 8L
         private const val PRIOR_REWARD = 0.0
         private const val PRIOR_WEIGHT = 4.0
         private const val HIT_BULLET_COST_SCALE = 0.35
-        private const val POWER_EPS = 1e-9
 
         private val perEnemy = HashMap<String, FirePowerSelector>()
 

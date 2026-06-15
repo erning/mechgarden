@@ -214,13 +214,6 @@ class Surfer {
             else -> 0.0
         }
 
-    /** Persist the backbone danger model across rounds. */
-    fun snapshot(): DoubleArray = danger.snapshot()
-
-    fun restore(data: DoubleArray) {
-        if (!danger.isWarm()) danger.restore(data)
-    }
-
     private companion object {
         const val VISIT_WEIGHT = 0.5
         const val HIT_WEIGHT = 60.0

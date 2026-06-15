@@ -138,7 +138,7 @@ abstract class Ronin : AdvancedRobot() {
 
     override fun onBulletHit(event: BulletHitEvent) {
         fireDetector.ourBulletHitEnemy(event.bullet.power)
-        gun.recordBulletHit(event.bullet.power)
+        gun.recordBulletHit(event.bullet)
         shadows.onBulletDead(event.bullet, time)
     }
 
@@ -150,7 +150,7 @@ abstract class Ronin : AdvancedRobot() {
     }
 
     override fun onBulletMissed(event: robocode.BulletMissedEvent) {
-        gun.recordBulletMiss(event.bullet.power)
+        gun.recordBulletMiss(event.bullet)
         shadows.onBulletGone(event.bullet)
     }
 
@@ -158,7 +158,7 @@ abstract class Ronin : AdvancedRobot() {
         // Our bullet destroyed an enemy bullet: that wave can't hit us — drop it
         // so it isn't mislearned as a passing visit. Our bullet died too.
         waves.matchBullet(time, event.hitBullet.x, event.hitBullet.y, event.hitBullet.velocity)
-        gun.recordBulletHitBullet(event.bullet.power)
+        gun.recordBulletHitBullet(event.bullet)
         shadows.onBulletDead(event.bullet, time)
     }
 

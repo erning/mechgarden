@@ -138,8 +138,8 @@ class Gun(
                     ctx.orbitSign,
                     ctx.maxEscapeDeg,
                 )
-                firePowerSelector.onFire(powerProfile, ctx.power)
-                shieldAimSelector.onFire(shieldAimProfile, ctx.power)
+                firePowerSelector.onFire(powerProfile, bullet)
+                shieldAimSelector.onFire(shieldAimProfile, bullet)
             }
             return bullet
         }
@@ -212,19 +212,19 @@ class Gun(
         )
     }
 
-    fun recordBulletHit(power: Double) {
-        firePowerSelector.recordHit(power)
-        shieldAimSelector.recordHit(power)
+    fun recordBulletHit(bullet: robocode.Bullet) {
+        firePowerSelector.recordHit(bullet)
+        shieldAimSelector.recordHit(bullet)
     }
 
-    fun recordBulletMiss(power: Double) {
-        firePowerSelector.recordMiss(power)
-        shieldAimSelector.recordMiss(power)
+    fun recordBulletMiss(bullet: robocode.Bullet) {
+        firePowerSelector.recordMiss(bullet)
+        shieldAimSelector.recordMiss(bullet)
     }
 
-    fun recordBulletHitBullet(power: Double) {
-        firePowerSelector.recordHitBullet(power)
-        shieldAimSelector.recordHitBullet(power)
+    fun recordBulletHitBullet(bullet: robocode.Bullet) {
+        firePowerSelector.recordHitBullet(bullet)
+        shieldAimSelector.recordHitBullet(bullet)
     }
 
     private fun context(

@@ -1,5 +1,6 @@
 package zen.ronin
 
+import robocode.Bullet
 import robocode.Rules
 
 /**
@@ -33,23 +34,23 @@ class ShieldAimSelector {
 
     fun onFire(
         profile: Profile,
-        power: Double,
+        bullet: Bullet,
     ) {
         if (profile == Profile.CENTER) return
-        rewards.onFire(profile.ordinal, power)
+        rewards.onFire(profile.ordinal, bullet)
         shieldSelections++
     }
 
-    fun recordHit(power: Double) {
-        rewards.complete(power, Rules.getBulletDamage(power) - power)
+    fun recordHit(bullet: Bullet) {
+        rewards.complete(bullet, Rules.getBulletDamage(bullet.power) - bullet.power)
     }
 
-    fun recordMiss(power: Double) {
-        rewards.complete(power, -power)
+    fun recordMiss(bullet: Bullet) {
+        rewards.complete(bullet, -bullet.power)
     }
 
-    fun recordHitBullet(power: Double) {
-        rewards.complete(power, -power * HIT_BULLET_PENALTY)
+    fun recordHitBullet(bullet: Bullet) {
+        rewards.complete(bullet, -bullet.power * HIT_BULLET_PENALTY)
     }
 
     private fun explorationProfile(): Profile? {

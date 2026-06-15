@@ -1,13 +1,17 @@
 package zen.ronin
 
-import kotlin.math.abs
+import robocode.Bullet
 
 /**
  * Per-shot reward bookkeeping shared by the firepower and shield-aim selectors:
- * profile-indexed shot counts and summed rewards, a pending queue matched back to
- * its profile by bullet power, and the prior-smoothed reward rate. The selection
+ * profile-indexed shot counts and summed rewards, a pending queue keyed by the
+ * fired bullet's identity, and the prior-smoothed reward rate. The selection
  * *policy* (which profiles to explore, how to score an outcome) stays in each
  * selector; this only owns the common accounting.
+ *
+ * Keying by the [Bullet] instance (not its power) attributes each outcome to the
+ * exact shot that produced it — two in-flight shots of equal power can no longer
+ * be confused.
  */
 class PerShotRewards(
     size: Int,
@@ -16,7 +20,7 @@ class PerShotRewards(
 ) {
     private class PendingShot(
         val ordinal: Int,
-        val power: Double,
+        val bullet: Bullet,
     )
 
     private val shots = LongArray(size)
@@ -29,19 +33,19 @@ class PerShotRewards(
 
     fun onFire(
         ordinal: Int,
-        power: Double,
+        bullet: Bullet,
     ) {
-        pending += PendingShot(ordinal, power)
+        pending += PendingShot(ordinal, bullet)
     }
 
     fun shotCount(ordinal: Int): Long = shots[ordinal]
 
-    /** Attribute an outcome to the oldest pending shot at [power]. */
+    /** Attribute an outcome to the pending shot fired as [bullet]. */
     fun complete(
-        power: Double,
+        bullet: Bullet,
         outcomeReward: Double,
     ) {
-        val index = pending.indexOfFirst { abs(it.power - power) <= POWER_EPS }
+        val index = pending.indexOfFirst { it.bullet === bullet }
         if (index < 0) return
         val shot = pending.removeAt(index)
         shots[shot.ordinal]++
@@ -49,8 +53,4 @@ class PerShotRewards(
     }
 
     fun rewardPerShot(ordinal: Int): Double = (reward[ordinal] + priorWeight * priorReward) / (shots[ordinal] + priorWeight)
-
-    private companion object {
-        const val POWER_EPS = 1e-9
-    }
 }

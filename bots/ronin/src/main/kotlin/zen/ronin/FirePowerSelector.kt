@@ -1,5 +1,6 @@
 package zen.ronin
 
+import robocode.Bullet
 import robocode.Rules
 
 /**
@@ -68,21 +69,21 @@ class FirePowerSelector {
 
     fun onFire(
         profile: Profile,
-        power: Double,
+        bullet: Bullet,
     ) {
-        rewards.onFire(profile.ordinal, power)
+        rewards.onFire(profile.ordinal, bullet)
     }
 
-    fun recordHit(power: Double) {
-        rewards.complete(power, Rules.getBulletDamage(power) - power)
+    fun recordHit(bullet: Bullet) {
+        rewards.complete(bullet, Rules.getBulletDamage(bullet.power) - bullet.power)
     }
 
-    fun recordMiss(power: Double) {
-        rewards.complete(power, -power)
+    fun recordMiss(bullet: Bullet) {
+        rewards.complete(bullet, -bullet.power)
     }
 
-    fun recordHitBullet(power: Double) {
-        rewards.complete(power, -power * HIT_BULLET_COST_SCALE)
+    fun recordHitBullet(bullet: Bullet) {
+        rewards.complete(bullet, -bullet.power * HIT_BULLET_COST_SCALE)
     }
 
     private fun explorationProfile(): Profile? {

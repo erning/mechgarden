@@ -1,0 +1,23 @@
+# Downloaded binaries, reference bot jars, and local indexes
+.cache/
+
+# Local engine install
+/robocode/
+
+# Build output
+build/
+out/
+*.class
+__pycache__/
+*.py[cod]
+
+# Gradle
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store

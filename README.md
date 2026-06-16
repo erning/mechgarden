@@ -1,7 +1,7 @@
 # MechGarden
 
 A Kotlin/JVM workspace for building, benchmarking, and dueling
-[Robocode](https://robocode.sourceforge.io/) classic 1.10.3 robots.
+[Robocode](https://robocode.sourceforge.io/) classic 1.11.0 robots.
 
 ## Robots
 

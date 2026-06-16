@@ -2,7 +2,7 @@
 
 ## Project
 
-MechGarden is a Kotlin/JVM workspace for Robocode classic 1.10.3 robots.
+MechGarden is a Kotlin/JVM workspace for Robocode classic 1.11.0 robots.
 
 Two active robot modules:
 
@@ -37,7 +37,7 @@ Tasks run through `just` and the checked-in Gradle wrapper.
 
 | Command | Purpose |
 |---------|---------|
-| `just robocode install` | Download and install the engine into `./robocode` |
+| `just robocode install` | Install the engine + sources into `./robocode` (`--no-source` to skip) |
 | `just build` | Build every module |
 | `just fmt` | Apply Spotless/ktlint formatting |
 | `just lint` | Check formatting |
@@ -58,6 +58,9 @@ Use `just refs ...` to download, deploy, list, or index reference robots from
 - `bots/fencer` — Fencer robot module.
 - `bots/ronin` — Ronin robot module.
 - `scripts/` — engine, reference-robot, duel, and UI launch tools.
+- `robocode/source/` — the engine's Robocode source tree (installed alongside
+  the engine; a local artifact, not in Git). Read it here instead of
+  decompiling `robocode/libs/*.jar`.
 - `docs/robocode-physics.md` — engine physics rules and constants reference.
 - `docs/robocode-scoring.md` — scoring breakdown (survival, bullet damage, etc.).
 - `docs/rumble-metrics.md` — APS/PWIN/survival metric definitions.

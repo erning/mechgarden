@@ -115,7 +115,7 @@ Do not undo these:
 
 1. Robots deploy as JARs, not loose classes.
 2. Kotlin and Java bytecode target Java 8 for Robocode's BCEL scanner.
-3. Kotlin 2.3.20 matches the stdlib bundled with the engine.
+3. Kotlin 2.4.0 matches the stdlib bundled with the engine.
 4. `kotlin-stdlib` is provided by Robocode and is not bundled.
 5. Headless runs on Java 18+ need the AWT headless flag, SecurityManager
    opt-in, and `--add-opens` flags already supplied by the scripts.

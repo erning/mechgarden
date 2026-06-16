@@ -5,9 +5,9 @@
 
 plugins {
     // Version matches the kotlin-stdlib bundled with the Robocode engine
-    // (robocode/libs/kotlin-stdlib-2.3.20.jar) so compiled robots stay
+    // (robocode/libs/kotlin-stdlib-2.4.0.jar) so compiled robots stay
     // binary-compatible with the runtime the engine provides.
-    kotlin("jvm") version "2.3.20" apply false
+    kotlin("jvm") version "2.4.0" apply false
     // Code formatting via ktlint. Run `just fmt` / `./gradlew spotlessApply`.
     id("com.diffplug.spotless") version "7.0.2"
 }

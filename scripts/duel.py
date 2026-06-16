@@ -25,6 +25,8 @@ ROBOTS_DIR = ROBOCODE_DIR / "robots"
 BOTS_DIR = ROOT / "bots"
 LOCAL_INDEX_PATH = refs.CACHE_DIR / "local-robots-index.json"
 ROUND_INITIALIZING = re.compile(r"^Round\s+(\d+)\s+initializing")
+BATTLE_RUNNER_SOURCE = ROOT / "scripts" / "BattleRunner.java"
+BATTLE_RUNNER_CLASSDIR = refs.CACHE_DIR / "battle-runner"
 
 
 @dataclass(frozen=True)
@@ -552,6 +554,119 @@ def run_robocode(
     )
 
 
+def row_for(rows: dict[str, ScoreRow], candidate: RobotCandidate) -> ScoreRow | None:
+    """Look up a result row by selector, then class name. The in-process runner may
+    report team-leader names without a version suffix, so fall back to the class."""
+    return rows.get(candidate.selector) or rows.get(candidate.class_name)
+
+
+def ensure_battle_runner() -> Path:
+    """Compile scripts/BattleRunner.java into the cache dir when stale or missing."""
+    classfile = BATTLE_RUNNER_CLASSDIR / "BattleRunner.class"
+    source_mtime = BATTLE_RUNNER_SOURCE.stat().st_mtime
+    if classfile.is_file() and classfile.stat().st_mtime >= source_mtime:
+        return BATTLE_RUNNER_CLASSDIR
+    BATTLE_RUNNER_CLASSDIR.mkdir(parents=True, exist_ok=True)
+    compiled = subprocess.run(
+        [
+            "javac",
+            "-cp",
+            str(ROBOCODE_DIR / "libs" / "*"),
+            "-d",
+            str(BATTLE_RUNNER_CLASSDIR),
+            str(BATTLE_RUNNER_SOURCE),
+        ],
+        cwd=ROBOCODE_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if compiled.returncode != 0:
+        raise UserError(f"failed to compile BattleRunner:\n{compiled.stderr}")
+    return BATTLE_RUNNER_CLASSDIR
+
+
+def run_robocode_engine(
+    robot_path: Path,
+    robots: str,
+    rounds: int,
+    results: Path,
+    watch: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a duel in-process via BattleRunner, streaming the watched robot's console
+    output to stdout and round-init markers to stderr. Results are written to
+    [results] in the CLI TSV format so parse_results works unchanged."""
+    classdir = ensure_battle_runner()
+    command = [
+        "java",
+        "-Xmx512M",
+        f"-DROBOTPATH={robot_path}",
+        f"-Drobocode.home={ROBOCODE_DIR}",
+        "-DTESTING=true",
+        "-DEXPERIMENTAL=true",
+        "-DNOSECURITY=false",
+        "-Drobocode.security.adapter=true",
+        "-Drobocode.options.battle.desiredTPS=10000",
+        "-Djava.awt.headless=true",
+        "-Djava.security.manager=allow",
+        "-XX:+IgnoreUnrecognizedVMOptions",
+        "--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+        "-cp",
+        f"{classdir}:libs/*",
+        "BattleRunner",
+        "--robots",
+        robots,
+        "--rounds",
+        str(rounds),
+        "--results",
+        str(results),
+        "--watch",
+        watch,
+    ]
+    sys.stdout.flush()
+    sys.stderr.flush()
+    process = subprocess.Popen(
+        command,
+        cwd=ROBOCODE_DIR,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+    stdout: list[str] = []
+    stderr: list[str] = []
+
+    def read_stdout() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            stdout.append(line)
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+    def read_stderr() -> None:
+        assert process.stderr is not None
+        for line in process.stderr:
+            stderr.append(line)
+            sys.stderr.write(line)
+            sys.stderr.flush()
+
+    threads = [
+        threading.Thread(target=read_stdout, daemon=True),
+        threading.Thread(target=read_stderr, daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    returncode = process.wait()
+    for thread in threads:
+        thread.join()
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout="".join(stdout),
+        stderr="".join(stderr),
+    )
+
+
 def parse_score(value: str) -> float:
     return float(value.split(" ", 1)[0])
 
@@ -788,6 +903,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow a robot to duel itself",
     )
+    parser.add_argument(
+        "--show-output",
+        action="store_true",
+        help="stream the -r robot's console output (out.println) during the duel; "
+        "runs the battle in-process via RobocodeEngine",
+    )
     return parser
 
 
@@ -827,60 +948,95 @@ def command_duel(arguments: argparse.Namespace) -> int:
         link_selected_sources(robot_path, all_robots)
         total_pairings = len(runnable_enemies)
         for pairing_index, enemy in enumerate(runnable_enemies, start=1):
-            battle = temp_dir / f"{enemy.class_name.replace('.', '_')}.battle"
             raw_results = temp_dir / f"{enemy.class_name.replace('.', '_')}.txt"
-            write_battle_file(battle, arguments.rounds, robot.selector, enemy.selector)
-            progress = ProgressLine(interactive=sys.stdout.isatty())
             progress_prefix = f"[{pairing_index}/{total_pairings}] {progress_name(enemy)}"
-            progress.start(f"{progress_prefix}: starting ({arguments.rounds} rounds)")
-            round_step = max(1, arguments.rounds // 10)
-            reported_rounds: set[int] = set()
 
-            def report_round(round_number: int) -> None:
-                if round_number in reported_rounds:
-                    return
-                if (
-                    round_number == 1
-                    or round_number == arguments.rounds
-                    or round_number % round_step == 0
-                ):
-                    reported_rounds.add(round_number)
-                    progress.update(
-                        f"{progress_prefix}: round {round_number}/{arguments.rounds}",
-                    )
-
-            completed = run_robocode(
-                robot_path,
-                battle,
-                raw_results,
-                on_round=report_round,
-            )
-            if completed.returncode != 0:
-                progress.break_line()
+            if arguments.show_output:
                 print(
-                    f"warning: Robocode exited with {completed.returncode} "
-                    f"for {enemy.selector}",
+                    f"=== {progress_prefix}: {robot.selector} vs {enemy.selector} "
+                    f"({arguments.rounds} rounds) ===",
                     file=sys.stderr,
                     flush=True,
                 )
-                if completed.stderr.strip():
+                completed = run_robocode_engine(
+                    robot_path,
+                    f"{robot.class_name},{enemy.class_name}",
+                    arguments.rounds,
+                    raw_results,
+                    robot.class_name,
+                )
+                if completed.returncode != 0:
                     print(
-                        completed.stderr.strip().splitlines()[-1],
+                        f"warning: BattleRunner exited {completed.returncode} "
+                        f"for {enemy.selector}",
                         file=sys.stderr,
                         flush=True,
                     )
+            else:
+                battle = temp_dir / f"{enemy.class_name.replace('.', '_')}.battle"
+                write_battle_file(
+                    battle, arguments.rounds, robot.selector, enemy.selector
+                )
+                progress = ProgressLine(interactive=sys.stdout.isatty())
+                progress.start(
+                    f"{progress_prefix}: starting ({arguments.rounds} rounds)"
+                )
+                round_step = max(1, arguments.rounds // 10)
+                reported_rounds: set[int] = set()
+
+                def report_round(round_number: int) -> None:
+                    if round_number in reported_rounds:
+                        return
+                    if (
+                        round_number == 1
+                        or round_number == arguments.rounds
+                        or round_number % round_step == 0
+                    ):
+                        reported_rounds.add(round_number)
+                        progress.update(
+                            f"{progress_prefix}: round {round_number}/{arguments.rounds}",
+                        )
+
+                completed = run_robocode(
+                    robot_path,
+                    battle,
+                    raw_results,
+                    on_round=report_round,
+                )
+                if completed.returncode != 0:
+                    progress.break_line()
+                    print(
+                        f"warning: Robocode exited with {completed.returncode} "
+                        f"for {enemy.selector}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    if completed.stderr.strip():
+                        print(
+                            completed.stderr.strip().splitlines()[-1],
+                            file=sys.stderr,
+                            flush=True,
+                        )
+
             rows = parse_results(raw_results)
             result = compute_result(
                 enemy,
                 arguments.rounds,
-                rows.get(robot.selector),
-                rows.get(enemy.selector),
+                row_for(rows, robot),
+                row_for(rows, enemy),
             )
             results.append(result)
-            progress.finish(
-                f"{progress_prefix}: finished, APS {format_float(result.aps)}%, "
-                f"survival {format_float(result.survival)}%",
-            )
+            if arguments.show_output:
+                print(
+                    f"--- {progress_prefix}: finished ---\n",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                progress.finish(
+                    f"{progress_prefix}: finished, APS {format_float(result.aps)}%, "
+                    f"survival {format_float(result.survival)}%",
+                )
 
     print_summary(robot, arguments.rounds, results)
     if arguments.output:

@@ -11,19 +11,31 @@ import java.awt.Color
  * Radar layer: at round start the body, gun, and radar spin together (adjust
  * flags left at their default false so they stack) and the sweep heads toward
  * the field center — enemy spawns are uniform, so a near-edge start is more
- * likely to face the interior. On first contact the flags are set true to
- * decouple the gun and radar for a stable 2x-overshoot lock, re-searched alone
- * if the lock is lost. The stacked sweep reaches the engine's max radar sweep
- * (~1.31 rad/tick). Over 1000 rounds vs sample.Crazy this finds the enemy in
- * ~2.2 ticks on average (max 5), down from ~4.3 (max 8) for a radar-only
- * fixed-direction sweep. The gun still fires head-on at minimum power; the body
- * still does not translate. Tracking, movement, and wave-surfing come later.
+ * likely to face the interior. The stacked sweep reaches the engine's max radar
+ * sweep (~1.31 rad/tick). Over 1000 rounds vs sample.Crazy this finds the enemy
+ * in ~2.2 ticks on average (max 5), down from ~4.3 (max 8) for a radar-only
+ * fixed-direction sweep.
+ *
+ * First contact has to undo that same fast sweep: the beam can overshoot the
+ * target by more than a decoupled radar's 45°/tick reach, so a plain decoupled
+ * 2x lock would miss the next tick and go blind for several ticks. So when the
+ * first-contact offset exceeds the radar's own turn rate, Mirage stays coupled
+ * for one recovery tick and turns body, gun, and radar toward the target so
+ * their rates stack (~75°/tick) and swing the beam back; otherwise it decouples
+ * immediately. After the lock settles the gun and radar are decoupled for a
+ * stable 2x-overshoot lock, re-searched alone if the lock is lost. The gun still
+ * fires head-on at minimum power; the body still does not translate. Tracking,
+ * movement, and wave-surfing come later.
  */
 abstract class Mirage : AdvancedRobot() {
     private val radar = Radar(this)
 
     private var lastScanTime = 0L
     private var locked = false
+
+    /** True for the one coupled recovery tick after a wide first-contact overshoot;
+     *  decouple into the stable lock on the next scan. */
+    private var coupledLockPending = false
 
     override fun run() {
         setBodyColor(Color(0x2B, 0x33, 0x33))
@@ -57,17 +69,34 @@ abstract class Mirage : AdvancedRobot() {
 
     override fun onScannedRobot(e: ScannedRobotEvent) {
         lastScanTime = time
+        val absBearing = Angles.normalizeAbsolute(headingRadians + e.bearingRadians)
+
         if (!locked) {
             locked = true
-            // Stop the opening body spin, then decouple gun/radar for a stable lock.
+            val offset = Angles.normalizeRelative(absBearing - radarHeadingRadians)
+            if (Math.abs(offset) > Rules.RADAR_TURN_RATE_RADIANS) {
+                // The opening sweep overshot the target by more than a decoupled
+                // radar can swing back in one tick. Stay coupled this tick and turn
+                // body, gun, and radar toward it so their rates stack (~75°/tick).
+                coupledLockPending = true
+                setTurnRightRadians(offset)
+                setTurnGunRightRadians(offset)
+                radar.lock(absBearing)
+                return
+            }
+            // Within a decoupled radar's reach: stop the body spin and decouple now.
+            setTurnRightRadians(0.0)
+            isAdjustGunForRobotTurn = true
+            isAdjustRadarForGunTurn = true
+        } else if (coupledLockPending) {
+            // Recovery tick done; settle into the decoupled stable lock.
+            coupledLockPending = false
             setTurnRightRadians(0.0)
             isAdjustGunForRobotTurn = true
             isAdjustRadarForGunTurn = true
         }
 
-        val absBearing = Angles.normalizeAbsolute(headingRadians + e.bearingRadians)
         radar.lock(absBearing)
-
         setTurnGunRightRadians(Angles.normalizeRelative(absBearing - gunHeadingRadians))
         if (gunHeat == 0.0) setFireBullet(Rules.MIN_BULLET_POWER)
     }

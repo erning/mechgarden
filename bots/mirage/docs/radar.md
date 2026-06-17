@@ -55,22 +55,45 @@ val dir = if (Angles.normalizeRelative(centerBearing - radarHeadingRadians) >= 0
 实测：1000 round 对 `sample.Crazy`，叠加 + 朝中心的方式平均约 **2.2 tick**
 找到对手（最坏 5 tick）；纯雷达固定方向扫描约 4.3 tick（最坏 8 tick）。
 
-## 4. 首次接触：解耦并锁定
+## 4. 首次接触：先把波束甩回来，再解耦锁定
 
-扫到第一帧后（`onScannedRobot`）立刻切换状态：
+冷启动的快速扫描要付出代价：开局三件套叠加约 75°/tick，扫到第一帧时波束往往
+已经**越过对手一大截**，offset 可能超过解耦雷达单 tick 能转的 45°。如果这一帧
+直接解耦、只靠雷达自身 45°/tick 去做过冲，下一 tick 波束转不回对手，就会瞎好
+几 tick：实测最坏要 7–8 tick 才重新扫回。
+
+所以首帧按 offset 大小分两种处理：
 
 ```kotlin
 if (!locked) {
     locked = true
-    setTurnRightRadians(0.0)          // 停掉开局的车身旋转
-    isAdjustGunForRobotTurn = true    // 解耦炮管与车身
-    isAdjustRadarForGunTurn = true    // 解耦雷达与炮管
+    val offset = Angles.normalizeRelative(absBearing - radarHeadingRadians)
+    if (Math.abs(offset) > Rules.RADAR_TURN_RATE_RADIANS) {   // > 45°
+        // 越过太远：保持耦合一个 tick，让车身 + 炮管 + 雷达一起朝目标转（~75°/tick）
+        coupledLockPending = true
+        setTurnRightRadians(offset)
+        setTurnGunRightRadians(offset)
+        radar.lock(absBearing)
+        return
+    }
+    // 在解耦雷达够得着的范围内：停车身并立即解耦
+    setTurnRightRadians(0.0)
+    isAdjustGunForRobotTurn = true
+    isAdjustRadarForGunTurn = true
 }
 ```
 
-- **停车身**：开局的无限旋转只为搜敌，锁定后不再需要。
-- **解耦**：把 adjust 标志设为 `true`，雷达转动从此独立，不再被车身/炮管的转动
-  干扰，锁定才稳。
+- **offset > 45°**：先别解耦，借开局还在转的车身（10°/tick）和炮管（20°/tick），
+  与雷达（45°/tick）叠加成约 75°/tick，一个 tick 把波束甩回对手；下一帧
+  （`coupledLockPending`）再停车身、置 adjust 标志解耦，进入稳定锁。
+- **offset ≤ 45°**：解耦雷达本就够得着，照旧停车身、立即解耦。阈值取雷达自身
+  转速 `RADAR_TURN_RATE_RADIANS`：更小的 offset 若仍用三者叠加，反而会冲过头到
+  另一侧、又超出 45°。
+- **解耦**：把 adjust 标志设为 `true`，雷达转动从此独立，不再被车身/炮管干扰，
+  锁定才稳。
+
+实测：100 round 对 `sample.Crazy`，修法前约 5% 的 round 在首帧后立刻掉锁、瞎
+2–8 tick；修法后这类冷启动掉锁降为 0，且首帧搜敌时间不变（仍约 2.2 tick）。
 
 ## 5. 2 倍过冲锁定
 

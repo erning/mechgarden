@@ -14,6 +14,8 @@ Active robot modules:
 - **`zen.Ronin`** (`bots/ronin`) — second-generation 1v1 wave-surfer built to
   beat Fencer and advance toward expert-tier opponents. Implementation in
   `zen.ronin.*`.
+- **`zen.Mirage`** (`bots/mirage`) — next defensive, movement-first 1v1 robot,
+  in early development. Implementation in `zen.mirage.*`.
 
 Each module has its own `bots/<name>/AGENTS.md` with robot-specific rules. That
 file applies to work inside its directory and takes precedence over this one
@@ -43,6 +45,7 @@ Use `just refs ...` to download, deploy, list, or index reference robots from
 
 - `bots/fencer` — Fencer robot module (`bots/fencer/AGENTS.md`).
 - `bots/ronin` — Ronin robot module (`bots/ronin/AGENTS.md`, `bots/ronin/docs/`).
+- `bots/mirage` — Mirage robot module (`bots/mirage/AGENTS.md`, `bots/mirage/docs/`).
 - `scripts/` — engine, reference-robot, duel, and UI launch tools.
 - `robocode/source/` — the engine's Robocode source tree (installed alongside
   the engine; a local artifact, not in Git). Read it here instead of
@@ -63,9 +66,9 @@ incidental — do not treat any one robot's structure as a workspace-wide
 contract, and do not factor shared behavior up into common infrastructure.
 
 This independence is also a hard dependency rule: do not add dependencies
-between `zen.fencer.*` and `zen.ronin.*` for robot tactics, models, profiles, or
-tuning. Robots may serve as engineering references for one another, but code is
-copied or reimplemented locally, never shared by import.
+between `zen.fencer.*`, `zen.ronin.*`, and `zen.mirage.*` for robot tactics,
+models, profiles, or tuning. Robots may serve as engineering references for one
+another, but code is copied or reimplemented locally, never shared by import.
 
 ## Build Constraints
 

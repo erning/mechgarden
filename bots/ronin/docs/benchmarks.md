@@ -1,12 +1,12 @@
 # Benchmark 记录
 
 本文记录本仓库本地 `just duel` 跑分结果。指标定义见
-[RoboRumble / LiteRumble 评分指标说明](rumble-metrics.md)。
+[RoboRumble / LiteRumble 评分指标说明](../../../docs/rumble-metrics.md)。
 
 ## 2026-06-15：Ronin vs roborumble-100
 
 - 请求命令：`just duel -r Ronin -c roborumble-100`
-- 机器人：`Ronin 0.1 (zen.Ronin, ronin.jar, build)`
+- 机器人：`Ronin 1.0.0 (zen.Ronin, ronin.jar, build)`
 - 回合数：每个对手 35 回合。
 
 | APS | PWIN | Survival | Pairings | DEALT/r | TAKEN/r |

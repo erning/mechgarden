@@ -77,4 +77,4 @@ GigaRumble 榜首 `kc.mega.BeepBoop 2.0` 的公开数据（快照 2026-04）：
 
 - LiteRumble 评分说明：<https://literumble.appspot.com/ScoreExplanation>
 - GigaRumble 排名：<https://literumble.appspot.com/Rankings?game=gigarumble>
-- 本仓库的 catalog 与跑分流程见 [`benchmarks.md`](benchmarks.md)。
+- 本仓库的 catalog 与跑分流程见 [`bots/ronin/docs/benchmarks.md`](../bots/ronin/docs/benchmarks.md)。

@@ -95,19 +95,45 @@ if (!locked) {
 实测：100 round 对 `sample.Crazy`，修法前约 5% 的 round 在首帧后立刻掉锁、瞎
 2–8 tick；修法后这类冷启动掉锁降为 0，且首帧搜敌时间不变（仍约 2.2 tick）。
 
-## 5. 2 倍过冲锁定
+## 5. 过冲锁定：过冲量随方位角速度自适应
 
-`Radar.lock` 把雷达转向目标的绝对方位，并**过冲 2 倍**：
+只转“刚好对准”会因为对手移动而在下一 tick 滑出波束边缘、丢失扫描。所以
+`Radar.lock` 指向目标绝对方位后还要**过冲**，让波束每 tick 都扫过目标再回来，
+从而稳定地逐帧重新捕获。
+
+固定 2 倍过冲（`offset × 2`）对温和对手已经几乎不丢锁，但近距离贴脸、撞击时
+对手的绝对方位每 tick 变化会冲高，固定过冲盖不住，就会掉一帧（瞎 2 tick 后
+重新扫回）。改为过冲量随方位角速度自适应：
 
 ```kotlin
-fun lock(absBearingRad: Double) {
-    val offset = Angles.normalizeRelative(absBearingRad - bot.radarHeadingRadians)
-    bot.setTurnRadarRightRadians(offset * LOCK_OVERSHOOT)   // LOCK_OVERSHOOT = 2.0
+fun lock(absBearingRadians: Double) {
+    val offset = Angles.normalizeRelative(absBearingRadians - bot.radarHeadingRadians)
+    val lead =
+        if (无历史) Math.abs(offset)                                  // 回退到 2 倍过冲
+        else Math.min(Math.abs(bearingRate) + SAFETY_MARGIN, MAX_LEAD) // 自适应：角速度 + 余量
+    val direction = if (offset >= 0.0) 1.0 else -1.0                  // 朝 offset 那一侧过冲
+    bot.setTurnRadarRightRadians(offset + direction * lead)
 }
 ```
 
-只转“刚好对准”会因为对手移动而在下一 tick 滑出波束边缘、丢失扫描。过冲 2 倍
-让波束每 tick 都扫过目标再回来，从而稳定地逐帧重新捕获。
+- **方向用 `sign(offset)`，不是 `sign(bearingRate)`**：朝「接近目标的那一侧」过冲，
+  波束在目标两侧来回摆动、自我纠正回到目标。若改用方位漂移方向过冲，波束会顺着
+  漂移一路追跑、彻底丢锁（实测会把丢失次数放大几个数量级）。
+- **过冲量 = `|bearingRate| + SAFETY_MARGIN`**（`SAFETY_MARGIN = 15°`，上限
+  `MAX_LEAD = 45°`）：对手方位变得越快，过冲越大，正好盖住下一 tick 的漂移加余量。
+- **`bearingRate`** 由 `Radar` 自存上一帧方位/时间求得；丢锁 `search()` 时清空历史，
+  重新锁定的第一帧没有历史，`lead` 回退到 `|offset|`，等价于原来的 2 倍过冲。
+
+实测（各 200 round，统计「丢了活目标又找回」的次数）：
+
+| 对手 | 固定 2 倍 | 自适应 |
+|------|-----------|--------|
+| `sample.Tracker`（贴身追打） | 491 | 0 |
+| `sample.RamFire`（撞击） | 312 | 0 |
+| `sample.Crazy`（温和绕行） | 0 | 0 |
+
+贴脸对手的逐帧掉锁基本被消除。等 Mirage 之后开始平移，自身切向速度会叠加到
+方位角速度上，这层自适应余量会更重要。
 
 ## 6. 丢失后重新搜寻
 
@@ -132,4 +158,4 @@ while (true) {
 
 - [Robocode 经典版 · 游戏物理规则](../../../docs/robocode-physics.md) —— 车身/炮管/雷达转速等约束。
 - `bots/mirage/src/main/kotlin/zen/mirage/Mirage.kt` —— 开局叠加扫描、首帧解耦、主循环重搜。
-- `bots/mirage/src/main/kotlin/zen/mirage/Radar.kt` —— 过冲锁定与重新搜寻。
+- `bots/mirage/src/main/kotlin/zen/mirage/Radar.kt` —— 自适应过冲锁定与重新搜寻。

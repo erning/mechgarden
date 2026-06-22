@@ -65,7 +65,28 @@ class Gun(
         gfWallGun.update(bot.time, enemy.x, enemy.y)
         dcGun.update(bot.time, enemy.x, enemy.y)
 
-        val aim = if (dcGun.size() >= DC_PRIMARY_MIN) VirtualGuns.Aim.GF_DC else vguns.best()
+        // Aim selection. DC (KNN) is forced primary once it has learned enough
+        //   — its virtual-gun score under-reports the real hit rate, so deferring
+        //   to the virtual scores regresses against DC-vulnerable movers. Below the
+        //   threshold the virtual-gun scores pick the best (circular default).
+        // One geometric exception: a *parked* target. Its guess factor is ~0 by
+        //   definition (it barely moves during the bullet's flight, so the direct
+        //   bearing is the impact bearing), but DC only knows that if it has seen
+        //   enough genuinely-stationary samples — against a mover that parks to
+        //   dodge (true-surf stop dodge, wall pin, stop-and-go), DC's nearest
+        //   neighbors are low-lateral *moving* snapshots whose GF is non-zero, so
+        //   it aims beside the target and misses every shot. Head-on is the
+        //   geometric optimum there and costs nothing, so override DC once the
+        //   target has been parked (sustained low speed, not a momentary
+        //   turn/slowdown tick — a single low-lateral tick would misfire this on
+        //   fast orbiters' direction changes).
+        val rawAim = if (dcGun.size() >= DC_PRIMARY_MIN) VirtualGuns.Aim.GF_DC else vguns.best()
+        val aim =
+            if (rawAim == VirtualGuns.Aim.GF_DC && tracker.stationaryTicks >= STATIONARY_AIM_GATE) {
+                VirtualGuns.Aim.HEAD_ON
+            } else {
+                rawAim
+            }
         // Energy-tier firepower: when Ronin has a clear energy lead (survival
         // buffer), fire aggressively to close out faster. When even or behind,
         // stay at the economy floor (cheap bullets + shadows). This leverages
@@ -414,6 +435,13 @@ class Gun(
         // out of choosePower so the per-scan loop doesn't recompute them.
         private val REF_ESCAPE = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(REF_POWER))
         private val REF_HALF_ANGLE = atan(Kinematics.HALF_BOT / REF_DISTANCE)
+
+        /** How many consecutive near-stationary ticks (Tracker's stationaryTicks,
+         *  speed <= 0.2) must accumulate before the DC→head-on override fires. A
+         *  sustained-low gate (not a single tick) keeps the override off during a
+         *  fast orbiter's momentary direction-change slowdowns, where DC is still
+         *  the right aim, and fires only for a genuinely parked target. */
+        private const val STATIONARY_AIM_GATE = 6L
 
         /** Cached enum array — iterating this avoids the per-call clone of Aim.values(). */
         private val AIM = VirtualGuns.Aim.values()

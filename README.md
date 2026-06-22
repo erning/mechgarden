@@ -1,106 +1,162 @@
 # MechGarden
 
-A Kotlin/JVM workspace for building, benchmarking, and dueling
+MechGarden is a Kotlin/JVM workspace for building, deploying, and benchmarking
 [Robocode](https://robocode.sourceforge.io/) classic 1.11.0 robots.
+
+The workspace is organized as independent robot modules under `bots/`. Each
+robot owns its tactics, models, tuning, profiles, and adaptive state inside its
+module; robot implementations do not import from one another.
 
 ## Robots
 
+### zen.Mirage (`bots/mirage`)
+
+Third-generation defensive, movement-first 1v1 wave-surfer.
+
+Mirage uses cold-start radar locking, scan tracking, a virtual-gun array, a
+dynamic-clustering KNN gun, enemy-wave surfing, bullet shadows, bullet-shielding
+support, anti-shield edge aim, per-round diagnostics, and A/B tuning overrides.
+Adaptive danger and targeting state is kept in memory for the current
+battle/JVM.
+
 ### zen.Ronin (`bots/ronin`)
 
-A second-generation 1v1 wave-surfer designed to beat expert-tier opponents.
+Second-generation 1v1 wave-surfer built to beat Fencer and advance toward
+expert-tier opponents.
 
-**Gun:** virtual-gun array — head-on, linear, circular leads, four segmented
-GuessFactor guns (distance × lateral, distance × lateral rolling, lateral ×
-acceleration, distance × lateral × wall-room), and a **dynamic-clustering KNN
-gun** that fires as the primary aim once it has enough data. Energy-tier
-firepower: aggressive finish (power 2.0) when leading, economy mode
-(power 1.2 + bullet shadows) when even or behind.
-
-**Movement:** wave surfing with a multi-buffer danger model (9 confidence-
-weighted ensemble buffers), bullet shadows (own in-flight bullets physically
-protect guess factors), adaptive engagement range (responds to the enemy's
-radial velocity), and multi-wave anticipation.
-
-**Adaptation:** tick-wave learning weight adapts to surfer detection; DC-gun
-observations and engagement parameters are retained per opponent within the
-current battle/JVM.
-
-**Performance:** DC gun KNN uses a three-way quickselect (O(n) average) with
-reused buffers — the per-scan KNN is allocation-free.
+Ronin adds a primary DC/KNN gun, pretrained distance-weight profiles,
+per-opponent firepower and movement profile selection, anti-shield aiming,
+energy-tier firepower, adaptive tick-wave learning, dynamic engagement range,
+bullet shadows, and in-memory per-opponent state. Ronin is complete and frozen;
+new tactics belong in a new module.
 
 ### zen.Fencer (`bots/fencer`)
 
-The original layered 1v1 wave-surfer with radar locking, scan tracking,
-enemy-wave detection, virtual-gun GF array, bullet shadows, and wave surfing.
+Original layered 1v1 wave-surfer and baseline robot.
+
+Fencer includes radar locking, scan tracking, enemy-wave detection, multi-wave
+surfing, a virtual-gun GuessFactor array, and bullet shadows in the danger
+model. Fencer is complete and frozen except for bug fixes, build repairs,
+formatting, and documentation.
 
 ## Quick Start
 
 ```bash
-# Install the Robocode engine
+# Install the Robocode engine and local source tree
 just robocode install
 
-# Build all modules
+# Build all robot modules
 just build
 
-# Deploy a robot
+# Deploy one robot jar into robocode/robots/
+just deploy mirage
 just deploy ronin
+just deploy fencer
 
-# Duel (100 rounds, headless)
-just duel -r Ronin -e Fencer -n 100
+# Run a headless duel
+just duel -r Mirage -e Fencer -n 100
 
-# Benchmark vs a reference catalog
-just duel -r Ronin -c basic -n 100       # 3 basic bots
-just duel -r Ronin -c expert -n 100       # 3 expert bots
-just duel -r Ronin -c top -n 100          # 6 GigaRumble top bots
+# Benchmark against reference catalogs
+just duel -r Mirage -c basic -n 100
+just duel -r Mirage -c expert -n 100
+just duel -r Mirage -c roborumble-100 -n 35
 
 # Launch the Robocode UI
 just run
 ```
 
+## Commands
+
+Tasks run through `just` and the checked-in Gradle wrapper.
+
+| Command | Purpose |
+|---------|---------|
+| `just robocode install` | Install Robocode and its source tree into `./robocode` |
+| `just build` | Build every robot module |
+| `just clean` | Remove Gradle build outputs |
+| `just fmt` | Apply Spotless/ktlint formatting |
+| `just lint` | Check formatting |
+| `just deploy <bot>` | Build and deploy one robot jar, for example `just deploy mirage` |
+| `just duel -r Mirage -e Fencer` | Duel two robots headlessly |
+| `just duel -r Mirage -c basic` | Duel against a reference catalog |
+| `just refs ...` | Download, deploy, list, or index reference robots |
+| `just run` | Launch the Robocode UI |
+
 ## Reference Catalogs
 
-Downloaded from the Robocode community archive via `just refs`:
+Reference robots are declared in `refs.jsonc` and downloaded from the Robocode
+community archive with `just refs`.
 
-| Catalog | Bots | Tier |
-|---------|------|------|
-| `basic` | FloodMini, BasicGFSurfer, RaikoNano | Beginner |
-| `classic` | RaikoMX, Lacrimas, BlestPain | Intermediate |
-| `expert` | Pear, CassiusClay, SandboxDT | Expert |
-| `top` | DrussGT, Diamond, Shadow, Gilgalad, ScalarR, BeepBoop | GigaRumble top |
+| Catalog | Contents |
+|---------|----------|
+| `basic` | FloodMini, BasicGFSurfer, RaikoNano |
+| `classic` | RaikoMX, Lacrimas, BlestPain |
+| `expert` | Pear, CassiusClay, SandboxDT |
+| `top` | DrussGT, ScalarR, BeepBoop |
+| `gigarumble` | Larger GigaRumble-oriented benchmark set |
+| `roborumble-100` | 100-robot Robocode rumble benchmark set |
 
 ```bash
-just refs download --catalog basic      # download jar files
-just refs deploy --catalog expert       # symlink into robocode/robots/
-just refs list --all                    # list all available
+just refs download --catalog basic
+just refs deploy --catalog expert
+just refs list --all
+just refs list --all --query shadow
 ```
 
 ## Repository Layout
 
-```
+```text
 bots/
-  fencer/          zen.Fencer — original wave-surfer
-  ronin/           zen.Ronin — advanced wave-surfer with DC gun
+  fencer/                 zen.Fencer robot module
+  mirage/                 zen.Mirage robot module
+  ronin/                  zen.Ronin robot module
+docs/                     Shared Robocode and technique references
 scripts/                  Engine, duel, reference-robot, and UI tools
-docs/                     Physics, scoring, and rumble-metric references
+robocode/                 Local Robocode install, generated by `just robocode install`
+refs.jsonc                Reference robot catalog definitions
 ```
 
-## Build
+## Build Notes
 
-Requires JDK 18+ (runs on Java 8 bytecode target). Uses the checked-in Gradle
-wrapper and [Spotless](https://github.com/diffplug/spotless)/ktlint for
-formatting.
+The project requires JDK 18+ to run the build and headless Robocode tools.
+Robot bytecode targets Java 8 so Robocode's BCEL scanner can load deployed jars.
+Kotlin stdlib is provided by Robocode and is not bundled into robot jars.
 
-```bash
-just build    # build everything
-just fmt      # auto-format
-just lint     # check formatting
-```
+Use `just lint` for Kotlin/Gradle formatting changes and `just build` for
+behavior-affecting Kotlin changes. Validate combat changes with APS/win-rate
+comparisons against suitable reference catalogs when Robocode and reference
+robots are installed.
 
 ## Documentation
 
-- [`docs/robocode-physics.md`](docs/robocode-physics.md) — engine physics rules,
+Shared references:
+
+- [`docs/robocode-physics.md`](docs/robocode-physics.md) - engine physics rules,
   constants, and turn order.
-- [`docs/robocode-scoring.md`](docs/robocode-scoring.md) — scoring breakdown
-  (survival, bullet damage, kill bonuses).
-- [`docs/rumble-metrics.md`](docs/rumble-metrics.md) — APS, PWIN, survival
-  metric definitions used by the duel harness.
+- [`docs/robocode-scoring.md`](docs/robocode-scoring.md) - scoring breakdown.
+- [`docs/rumble-metrics.md`](docs/rumble-metrics.md) - APS, PWIN, and survival
+  metric definitions.
+- [`docs/dc-knn-targeting.md`](docs/dc-knn-targeting.md) - dynamic-clustering
+  KNN targeting.
+- [`docs/guess-factor.md`](docs/guess-factor.md) - GuessFactor targeting.
+- [`docs/bullet-shield.md`](docs/bullet-shield.md) - bullet shielding.
+- [`docs/flattening-and-adaptive-gun.md`](docs/flattening-and-adaptive-gun.md)
+  - surfing flattening and adaptive gun notes.
+- [`docs/goto-vs-path-surfing.md`](docs/goto-vs-path-surfing.md) - movement
+  model tradeoffs.
+- [`docs/robocode-bullet-hit-detection.md`](docs/robocode-bullet-hit-detection.md)
+  - bullet hit detection.
+- [`docs/robocode-event-model.md`](docs/robocode-event-model.md) - Robocode
+  event ordering.
+- [`docs/robocode-set-commands.md`](docs/robocode-set-commands.md) - Robocode
+  `set*` command behavior.
+
+Robot-specific docs:
+
+- [`bots/mirage/docs/radar.md`](bots/mirage/docs/radar.md) - Mirage radar.
+- [`bots/mirage/docs/tuning.md`](bots/mirage/docs/tuning.md) - Mirage
+  diagnostics and tuning overrides.
+- [`bots/ronin/docs/deep-dive.md`](bots/ronin/docs/deep-dive.md) - Ronin
+  architecture walkthrough.
+- [`bots/ronin/docs/benchmarks.md`](bots/ronin/docs/benchmarks.md) - Ronin
+  benchmark snapshots.

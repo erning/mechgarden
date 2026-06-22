@@ -9,12 +9,7 @@ import robocode.ScannedRobotEvent
  * A [ScannedRobotEvent] reports the enemy relative to us (bearing off our heading,
  * distance), so deriving the enemy's absolute position and bearing needs our own
  * state at scan time. [from] takes that as a [RobotState]; pass the snapshot for
- * the same tick (e.g. captured in `onStatus`, or `RobotState.from(this)` inside
- * `onScannedRobot`) or the absolute position will be wrong.
- *
- * [headingRadians] is the enemy's own heading; [absoluteBearingRadians] is the
- * bearing from our position to the enemy. Other layers read this snapshot rather
- * than re-deriving from the raw event.
+ * the same tick or the absolute position will be wrong.
  */
 data class EnemyState(
     val time: Long,

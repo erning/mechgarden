@@ -128,10 +128,21 @@ def robot_candidates_from_metadata(
 def is_ref_link(path: Path) -> bool:
     if not path.is_symlink():
         return False
+    target = path.resolve(strict=False)
     try:
-        return path.resolve().is_relative_to(refs.REFS_DIR.resolve())
+        if target.is_relative_to(refs.REFS_DIR.resolve()):
+            return True
+    except OSError:
+        pass
+    # The robocode/ engine dir is commonly symlinked across worktrees, so a
+    # ref link there may resolve under a sibling worktree's .cache/refs. Fall
+    # back to matching by the link's direct target name against the refs index,
+    # which is worktree-independent.
+    try:
+        link_target = Path(os.readlink(path))
     except OSError:
         return False
+    return link_target.name in refs.load_index_by_jar(required=False)
 
 
 def project_build_jars() -> Iterable[Path]:
@@ -487,6 +498,7 @@ def run_robocode(
     battle: Path,
     results: Path,
     on_round: Callable[[int], None] | None = None,
+    seed: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         "java",
@@ -507,6 +519,11 @@ def run_robocode(
         "-results",
         str(results),
     ]
+    if seed is not None:
+        # The engine's BattleManager reads RANDOMSEED at battle start and reseeds
+        # Robocode's deterministic RNG, so initial positions, headings, and the
+        # fair-play robot/bullet ordering are reproducible run-to-run.
+        command.insert(command.index("robocode.Robocode"), f"-DRANDOMSEED={seed}")
     sys.stdout.flush()
     sys.stderr.flush()
     process: subprocess.Popen[str] | None = None
@@ -591,6 +608,7 @@ def run_robocode_engine(
     rounds: int,
     results: Path,
     watch: str,
+    seed: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a duel in-process via BattleRunner, streaming the watched robot's console
     output to stdout and round-init markers to stderr. Results are written to
@@ -623,6 +641,12 @@ def run_robocode_engine(
         "--watch",
         watch,
     ]
+    if seed is not None:
+        # BattleManager reseeds from -DRANDOMSEED at battle start; BattleRunner
+        # also calls RandomFactory.resetDeterministic explicitly for the control
+        # API (mirroring Robocode's own RobotTestBed).
+        command.insert(command.index("-cp"), f"-DRANDOMSEED={seed}")
+        command.extend(["--seed", str(seed)])
     sys.stdout.flush()
     sys.stderr.flush()
     process = subprocess.Popen(
@@ -909,6 +933,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="stream the -r robot's console output (out.println) during the duel; "
         "runs the battle in-process via RobocodeEngine",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        metavar="N",
+        default=None,
+        help="seed Robocode's deterministic RNG (RANDOMSEED) so initial positions, "
+        "headings, and the engine's fair-play ordering are reproducible run-to-run. "
+        "A duel is fully reproducible only when both robots pull randomness through "
+        "Math.random() (Robocode's controlled RNG); a robot that constructs its own "
+        "java.util.Random() stays stochastic (e.g. the frozen Ronin).",
+    )
     return parser
 
 
@@ -964,6 +999,7 @@ def command_duel(arguments: argparse.Namespace) -> int:
                     arguments.rounds,
                     raw_results,
                     robot.class_name,
+                    arguments.seed,
                 )
                 if completed.returncode != 0:
                     print(
@@ -1002,6 +1038,7 @@ def command_duel(arguments: argparse.Namespace) -> int:
                     battle,
                     raw_results,
                     on_round=report_round,
+                    seed=arguments.seed,
                 )
                 if completed.returncode != 0:
                     progress.break_line()

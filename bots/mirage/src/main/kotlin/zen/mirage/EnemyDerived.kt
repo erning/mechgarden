@@ -12,12 +12,11 @@ package zen.mirage
  *
  * [lateralVelocity] and [advancingVelocity] split the enemy's own velocity about
  * our line of sight (lateral perpendicular, advancing positive toward us).
- * [bearingRateRadians] is the full angular sweep of the enemy and so also reflects
- * our own motion. [lateralDirection] is just the sign of [lateralVelocity] (0 when
- * the enemy moves straight at or away from us); keeping it sticky across those
- * straight-line moments is left to the consumer. [energyDelta] is the raw energy
- * change; deciding that the enemy fired (and excluding wall and bullet-hit causes)
- * belongs to the wave layer.
+ * [turnRateRadians] is the enemy's own heading change per tick (what a circular
+ * lead uses). [lateralDirection] is the raw sign of [lateralVelocity] (0 when the
+ * enemy moves straight at or away); keeping it sticky is left to the consumer.
+ * [energyDelta] is the raw energy change; deciding the enemy fired belongs to the
+ * [FireDetector].
  */
 data class EnemyDerived(
     val lateralVelocity: Double,
@@ -36,7 +35,6 @@ data class EnemyDerived(
             previous: EnemyState,
         ): EnemyDerived {
             val dt = (current.time - previous.time).coerceAtLeast(1L).toDouble()
-            // Angle of the enemy's travel direction off our line of sight to it.
             val angleOffLineOfSight = current.headingRadians - current.absoluteBearingRadians
             val lateralVelocity = current.velocity * Math.sin(angleOffLineOfSight)
             return EnemyDerived(
@@ -51,7 +49,7 @@ data class EnemyDerived(
                     Angles.normalizeRelative(
                         current.headingRadians - previous.headingRadians,
                     ) / dt,
-                acceleration = (current.velocity - previous.velocity) / dt,
+                acceleration = (Math.abs(current.velocity) - Math.abs(previous.velocity)) / dt,
                 distanceRate = (current.distance - previous.distance) / dt,
                 energyDelta = current.energy - previous.energy,
             )

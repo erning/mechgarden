@@ -12,10 +12,6 @@ import robocode.RobotStatus
  *    the moment a bullet is fired to stamp a wave origin).
  *  - [from] a [RobotStatus]: the snapshot Robocode hands to `onStatus` every tick,
  *    the natural place to capture our state once per turn.
- *
- * Holds only physical state; command progress (turn/distance remaining) is left
- * out until a layer needs it. Other layers collect what they need from this
- * snapshot rather than poking the robot directly.
  */
 data class RobotState(
     val time: Long,

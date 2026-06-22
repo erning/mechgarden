@@ -10,10 +10,15 @@ Where the two conflict, this file takes precedence for Mirage work.
 `zen.Mirage` is MechGarden's next defensive, movement-first 1v1 robot, in early
 development. Implementation lives in `zen.mirage.*`.
 
-Current state: a fast cold-start radar that finds and locks the enemy, with a
-placeholder gun that fires head-on at minimum power. The body does not translate
-yet; tracking, movement, and wave-surfing come later. Build each layer on clear
-foundations before adding advanced learning.
+Current state: a full movement-first 1v1 wave-surfer. A cold-start radar locks
+the enemy; a scan→track→fire pipeline drives a virtual-gun array plus a
+DC (KNN) dynamic-clustering gun (forced primary once it has learned enough);
+enemy shots are detected from energy and modelled as expanding waves; the body
+surfs the nearest wave toward the lowest-danger guess factor, protected by
+bullet shadows cast by our own outgoing bullets; bullet-shielding and anti-shield
+edge-aim are handled. Adaptive state (danger ensemble, DC observations) lives in
+per-enemy static registries that survive the per-round robot rebuild. See
+`docs/tuning.md` for the diagnostic + A/B override system.
 
 Keep Mirage self-contained: put all tactics, models, profiles, tuning, and state
 under `zen.mirage.*`, and depend on no other robot's implementation (see the root
@@ -23,6 +28,8 @@ references, but do not copy their complexity before Mirage needs it.
 ## Design Docs
 
 - `bots/mirage/docs/radar.md` — the cold-start radar fast-search and lock.
+- `bots/mirage/docs/tuning.md` — per-round diagnostics (`mirage.debug`) and the
+  A/B tuning overrides, with the measurements that settled the current defaults.
 
 ## Units And Coordinates
 

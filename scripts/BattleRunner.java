@@ -1,6 +1,7 @@
 import robocode.BattleResults;
 
 import robocode.control.BattleSpecification;
+import robocode.control.RandomFactory;
 import robocode.control.BattlefieldSpecification;
 import robocode.control.RobocodeEngine;
 import robocode.control.RobotSpecification;
@@ -58,12 +59,18 @@ public class BattleRunner {
                 case "--watch":
                     watchPrefix = args[++i];
                     break;
+                case "--seed":
+                    // Seed Robocode's deterministic RNG up front (BattleManager
+                    // also honors -DRANDOMSEED, but this is authoritative for the
+                    // control-API path and mirrors Robocode's own RobotTestBed).
+                    RandomFactory.resetDeterministic(Long.parseLong(args[++i]));
+                    break;
                 default:
                     break;
             }
         }
         if (robots == null || resultsPath == null || rounds <= 0) {
-            System.err.println("usage: BattleRunner --robots A,B --rounds N --results FILE [--watch CLASS]");
+            System.err.println("usage: BattleRunner --robots A,B --rounds N --results FILE [--watch CLASS] [--seed N]");
             System.exit(2);
         }
 

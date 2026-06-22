@@ -3,15 +3,16 @@ package zen.mirage
 import kotlin.math.atan2
 
 /**
- * Neutral angle helpers for Mirage, all in radians (Robocode frame: +x east,
+ * Neutral angle helpers, all in radians (Robocode frame: +x east,
  * +y north; heading/bearing 0 = north, increasing clockwise — see
- * docs/robocode-physics.md). No robot stats, no strategy: pure functions usable
- * by any layer to normalize angles or compute bearings. Pair with the *Radians
- * robot APIs (headingRadians, bearingRadians, setTurnRightRadians, ...) so no
- * unit conversion is needed anywhere.
+ * docs/robocode-physics.md). No robot stats, no strategy: pure functions usable by
+ * any layer to normalize angles or compute bearings. Pair with the *Radians robot
+ * APIs (headingRadians, bearingRadians, setTurnRightRadians, ...) so no unit
+ * conversion is needed anywhere.
  */
 object Angles {
     val PI = Math.PI
+    val HALF_PI = PI / 2.0
     val TWO_PI = 2.0 * PI
 
     /** Normalize an angle to (-PI, PI] radians. */
@@ -35,5 +36,8 @@ object Angles {
         y1: Double,
         x2: Double,
         y2: Double,
-    ): Double = normalizeAbsolute(atan2(x2 - x1, y2 - y1))
+    ): Double {
+        val angle = atan2(x2 - x1, y2 - y1)
+        return if (angle < 0.0) angle + TWO_PI else angle
+    }
 }

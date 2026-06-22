@@ -152,18 +152,60 @@ APS/SURV 一致上升，SandboxDT 持平。半衰期扫描：`400` 优于 `250`/
   Gilgalad 0.562、SandboxDT 0.566 全挤在一起，只有 Firestarter（0.519）偏低。
   「flattener 能解释命中」是大多数枪的共性，与 flatten 是否有效无关。
 
-故不引入该机制。要大幅提升单一强枪（如 SandboxDT）的生存率，需的是更强的核心 surf
-危险模型，而非按对手选 flatten。
+故不引入该机制。（注：本节说的是**枪侧** flattener——按对手调「预测敌方 GF」的
+flatten 权重，结论负面。下面 3.8 节验证的是另一个机制——**移动侧** flattener，即让我们
+少去高频 GF，结论相反，是净胜的。）
 
-## 4. 当前实测定位（枪精确 MEA 默认）
+### 3.8 移动侧 flattener（受弹触发的自适应开关）：对强自适应枪净胜
+
+与 3.7 的枪侧 flattener 不同：移动侧 flattener（`Surfer` 里的 `VisitFlattener`）给
+「我方频繁访问的 GF」加危险，把我们推商这些 GF——从而压平访问分布、干扰学习型枪的
+锁定。`mirage.flatten` 是该权重的全局 override。
+
+诊断显示 SandboxDT 命中我方在 GF 0 附近有 ~1.6× 峰（均与 9.1% 对比中央 bin
+14.7%），说明我方移动有中心趋向，可被学习型枪利用。强行 `mirage.flatten=0.35`（全局
+常开）的 200回合×3 A/B：
+
+| 对手 | 旧 APS/SURV/TAKEN | flat=0.35 APS/SURV/TAKEN |
+|------|-------------------|-------------------------|
+| SandboxDT | 51.5 / 61.5 / 48.6 | 53.2 / 65.5 / 46.4 |
+| Firestarter | 38.0 / 30.0 / — | 42.3 / 35.5 / — |
+
+但 flattener 对弱枪净负（FloodMini −3）：弱枪下我方本来就有安全的 GF，flatten 会把我们
+从安全 GF 推到仍危险的 GF（这与既有结论「flatten 普遍负面」一致）。因此不能设为全局
+默认。
+
+关键设计是**按近期受弹触发**：flattener 只在「敌枪持续重创我方」时开启。机制：
+`MovementProfileSelector` 维护一个全局受弹 EMA 与带滞后的开关（arm 3 回合后，EMA
+≥40 开启、≤30 关闭）。强枪（SandboxDT ~48、Firestarter 高）锁定为开；弱枪（FloodMini
+~20、RaikoNano 低）保持关。这正好对应 flattener 有益的场景——被重创时没有真正安全的 GF
+可损失，重新分布访问只会扰乱敌方锁定，不会变差。
+
+实测（各对手 100回合×2，对比触发器关闭的旧版本）：
+
+| 对手 | 旧 APS | 新 APS | Δ |
+|------|--------|--------|------|
+| SandboxDT | 51.5 | 54.8 | +3.3 |
+| Firestarter | 38.0 | 40.7 | +2.7 |
+| Ronin | 62.1 | 64.8 | +2.7 |
+| RaikoNano | 78.4 | 79.2 | +0.8 |
+| FloodMini | 78.3 | 78.8 | +0.5 |
+
+强自适应枪一致上升，弱枪持平（触发器保持关），零退化。flattener 权重扫掠：0.2 略弱、
+0.35 最优、0.5+ 过度反而变差。
+
+## 4. 当前实测定位（枪精确 MEA + 受弹触发 flattener）
 
 | 对手 | Mirage APS | 备注 |
 |------|------------|------|
-| Ronin | ~57 | 稳定胜出（theory MEA 时 ~51）|
-| SandboxDT | ~55 | 持平到微胜（100r×4：枪精确 55.8 vs theory 53.7；该对手单样本方差 ±4）|
-| 第三方 6 对手均值 | ~66 | 高于 Ronin（~60）；basic 全胜，expert 赢 Pear、与 CassiusClay 持平 |
+| Ronin | ~63 | 稳定胜出（同源 surfer）|
+| SandboxDT | ~54 | 受弹触发 flattener 后从 ~51.5 升到 ~54（200r：SURV 61.5→66，TAKEN 48.6→45.3）|
+| Firestarter | ~41 | flattener 触发后上升（38→41）|
+| 第三方弱枪 | ~79 | FloodMini/RaikoNano 全胜（触发器保持关，不受影响）|
+| expert 目录 | ~57 | PWIN 100%（赢 Pear、CassiusClay、SandboxDT）|
 
-枪侧精确 MEA 让 Mirage 在内部对战（同源 surfer Ronin）和第三方比赛中都稳定胜出。
+枪侧精确 MEA 让枪更准；受弹触发的移动侧 flattener 让强自适应枪打不準我方——两者叠加
+让 Mirage 在 SandboxDT 这类顶尖 surfer+枪组合上从硬币战 (~51%) 提升到稳定微胜 (~54%)。
 
 ## 参考
 

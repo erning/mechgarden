@@ -350,11 +350,23 @@ abstract class Mirage : AdvancedRobot() {
     }
 
     private fun selectedMovementProfile(): MovementProfileSelector.Profile {
+        // profileForRound() has side effects (rounds counter, chosen profile, auto
+        // exploration) and feeds the damage latch, so always invoke it.
         val selected = movementSelector.profileForRound()
-        return if (System.getProperty("mirage.profile") == null) {
-            survivalPolicy.movementProfile ?: selected
+        val forced = System.getProperty("mirage.profile")
+        if (forced != null) return selected
+        // A survival policy that mandates a movement profile (NOISY_ORBIT,
+        // SURVIVAL_SEARCH) wins outright.
+        survivalPolicy.movementProfile?.let { return it }
+        // Otherwise the movement layer owns the PURE_SURF vs FLAT_SURF choice. The
+        //  flattener is latched on by recent damage taken (see
+        //  MovementProfileSelector.flattenRecommended): on against sustained-accurate
+        //  guns where flattening disrupts their lock and no safe GFs are lost, off
+        //  against weak guns we already dodge (where flattening would cost safe GFs).
+        return if (movementSelector.flattenRecommended()) {
+            MovementProfileSelector.Profile.FLAT_SURF
         } else {
-            selected
+            MovementProfileSelector.Profile.PURE_SURF
         }
     }
 

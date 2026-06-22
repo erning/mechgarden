@@ -14,8 +14,8 @@ Active robot modules:
 - **`zen.Ronin`** (`bots/ronin`) — second-generation 1v1 wave-surfer built to
   beat Fencer and advance toward expert-tier opponents. Implementation in
   `zen.ronin.*`.
-- **`zen.Mirage`** (`bots/mirage`) — next defensive, movement-first 1v1 robot,
-  in early development. Implementation in `zen.mirage.*`.
+- **`zen.Mirage`** (`bots/mirage`) — third-generation defensive, movement-first
+  1v1 wave-surfer. Implementation in `zen.mirage.*`.
 
 Each module has its own `bots/<name>/AGENTS.md` with robot-specific rules. That
 file applies to work inside its directory and takes precedence over this one

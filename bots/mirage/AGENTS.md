@@ -7,8 +7,8 @@ Where the two conflict, this file takes precedence for Mirage work.
 
 ## Mirage Role
 
-`zen.Mirage` is MechGarden's next defensive, movement-first 1v1 robot, in early
-development. Implementation lives in `zen.mirage.*`.
+`zen.Mirage` is MechGarden's third defensive, movement-first 1v1 wave-surfer.
+Implementation lives in `zen.mirage.*`.
 
 Current state: a full movement-first 1v1 wave-surfer. A cold-start radar locks
 the enemy; a scan→track→fire pipeline drives a virtual-gun array plus a

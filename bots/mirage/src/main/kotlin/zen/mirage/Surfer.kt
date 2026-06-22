@@ -31,6 +31,17 @@ class Surfer {
     private var danger: DangerModel = DangerModel()
     private var flattener: VisitFlattener = VisitFlattener()
     private var lastDir = 1
+
+    /** Recent stop pressure: accumulates on each stop tick and decays on each move
+     *  tick, so a single nudge does not wipe a sustained-stop history. Stop is a
+     *  tactical, single-wave dodge (thread a low-danger GF we can only hold while
+     *  still), but it must not park us: a stationary target is trivially hittable
+     *  by any gun with a head-on fallback, and thousands of stuck ticks make a
+     *  degenerate, brittle stall (seen vs Ronin, whose forced-DC gun never aims
+     *  GF 0). The escalating [STOP_STICKINESS_PENALTY] keeps stop tactical; the
+     *  slow [STOP_PRESSURE_DECAY] also breaks the stop-nudge-stop parking cycle
+     *  (stop a few ticks, nudge to reset, stop again). */
+    private var stopPressure = 0.0
     private val valleyGfs = DoubleArray(MAX_SEARCH_GFS)
     private val valleyCosts = DoubleArray(MAX_SEARCH_GFS)
     private val primaryPath = Path(MAX_TICKS)
@@ -193,13 +204,23 @@ class Surfer {
             }
             stopCost += profile.wallWeight * wallRisk(stop.x, stop.y, fieldWidth, fieldHeight)
             stopCost += profile.stopPenalty
+            // Anti-stickiness: an escalating penalty per unit of recent stop pressure
+            //  keeps stop a tactical, single-wave dodge rather than a parking strategy.
+            //  The base [stopPenalty] gates a first stop; the ramp ensures that after a
+            //  few still ticks the cheapest orbit wins again, so we resume moving even
+            //  when GF 0 reads as safest (e.g. vs a gun that never aims it). Pressure
+            //  accumulates on stop ticks and only slowly decays on move ticks, so a
+            //  stop-nudge-stop cycle can't reset it and keep parking.
+            stopCost += stopPressure * STOP_STICKINESS_PENALTY
             stopCost += Math.random() * profile.tieNoise
             if (stopMode == "force" || stopCost < bestCost) {
+                stopPressure += 1.0
                 motion.driveAlongRadians(self.headingRadians, STOP_SPEED)
                 return
             }
         }
 
+        stopPressure = (stopPressure - STOP_PRESSURE_DECAY).coerceAtLeast(0.0)
         lastDir = bestDir
         if (bestGoHeadingRadians.isNaN()) {
             motion.orbitRadians(incoming.sourceX, incoming.sourceY, bestDir, bestTargetRange, maxSpeed = bestSpeed)
@@ -621,6 +642,20 @@ class Surfer {
         const val HIT_WEIGHT = 60.0
         const val MAX_TICKS = 100
         const val STOP_SPEED = 0.0
+
+        /** Per-unit escalation added to stop's cost for each unit of recent stop
+         *  pressure (anti-stickiness). Sized so a genuinely-safer stop still wins
+         *  for a few ticks (one wave's crossing window) but cannot park
+         *  indefinitely: after ~10–25 still ticks the ramp overtakes any realistic
+         *  orbit-danger gap, forcing movement even when GF 0 reads as safest. */
+        const val STOP_STICKINESS_PENALTY = 0.04
+
+        /** Stop pressure removed per move tick. Equals the per-stop accumulation
+         *  (1.0), so stop pressure is the running excess of stop ticks over move
+         *  ticks: a sustained stop (or stop-nudge cycle) climbs without bound and
+         *  is steadily deterred, while a brief tactical stop fully clears after an
+         *  equal number of move ticks. */
+        const val STOP_PRESSURE_DECAY = 1.0
         const val WALL_RANGE = 120.0
         const val SEARCH_MARGIN = Kinematics.HALF_BOT + 28.0
         const val MIN_SEARCH_RADIUS = 180.0

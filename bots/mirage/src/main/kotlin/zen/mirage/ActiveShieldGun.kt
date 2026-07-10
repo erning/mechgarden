@@ -50,13 +50,16 @@ class ActiveShieldGun(
 
     fun adaptiveReady(): Boolean = policy.activeForRound()
 
+    fun adaptiveTrial(): Boolean = policy.trialForRound()
+
     fun recordRound(
         dealt: Double,
         taken: Double,
         survived: Boolean,
         usedActiveShield: Boolean,
+        ramThreat: Boolean,
     ) {
-        policy.recordRound(dealt, taken, survived, usedActiveShield)
+        policy.recordRound(dealt, taken, survived, usedActiveShield, ramThreat)
     }
 
     /** Return the earliest usable head-on-wave intercept, if one exists. */

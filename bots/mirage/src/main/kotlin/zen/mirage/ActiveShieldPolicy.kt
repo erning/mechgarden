@@ -25,6 +25,7 @@ class ActiveShieldPolicy {
         taken: Double,
         survived: Boolean,
         usedActiveShield: Boolean,
+        ramThreat: Boolean = false,
     ) {
         val safeDealt = dealt.coerceAtLeast(0.0)
         val safeTaken = taken.coerceAtLeast(0.0)
@@ -35,13 +36,15 @@ class ActiveShieldPolicy {
         } else {
             normalRounds++
             normalUtility += utility
-            if (normalRounds >= MIN_NORMAL_ROUNDS &&
-                averageNormalUtility() <= MAX_NORMAL_UTILITY_FOR_TRIAL &&
-                !survived &&
-                safeTaken >= TRIAL_MIN_TAKEN &&
-                safeDealt <= TRIAL_MAX_DEALT
-            ) {
-                pendingTrial = true
+            if (!ramThreat) {
+                if (normalRounds >= MIN_NORMAL_ROUNDS &&
+                    averageNormalUtility() <= MAX_NORMAL_UTILITY_FOR_TRIAL &&
+                    !survived &&
+                    safeTaken >= TRIAL_MIN_TAKEN &&
+                    safeDealt <= TRIAL_MAX_DEALT
+                ) {
+                    pendingTrial = true
+                }
             }
         }
         if (normalRounds >= MIN_NORMAL_ROUNDS &&
@@ -53,6 +56,10 @@ class ActiveShieldPolicy {
     }
 
     fun activeForRound(): Boolean = selectedForRound
+
+    fun trialForRound(): Boolean = selectedForRound && !latched
+
+    fun latchedForRound(): Boolean = selectedForRound && latched
 
     fun debugSummary(): String =
         "shieldPolicy=${if (selectedForRound) "trial" else "normal"}/${if (latched) "latched" else "open"}/" +

@@ -61,6 +61,8 @@ class Surfer {
         dangerMode: DangerMode,
         stopAllowed: Boolean? = null,
         virtualWave: EnemyWave? = null,
+        preferredDirection: Int? = null,
+        directionPenalty: Double = 0.0,
     ) {
         // Nearest two not-yet-arrived waves.
         var incoming: EnemyWave? = null
@@ -93,7 +95,7 @@ class Surfer {
             }
         }
         if (incoming == null) {
-            if (enemy != null) motion.orbitRadians(enemy.enemy.x, enemy.enemy.y, lastDir, targetRange)
+            if (enemy != null) motion.orbitRadians(enemy.enemy.x, enemy.enemy.y, preferredDirection ?: lastDir, targetRange)
             return
         }
 
@@ -127,6 +129,7 @@ class Surfer {
                         c += profile.secondWaveDiscount * pathDanger(second, path2, profile.flattenerWeight, dangerMode)
                     }
                     c += profile.wallWeight * wallRisk(path.x, path.y, fieldWidth, fieldHeight)
+                    if (preferredDirection != null && dir != preferredDirection) c += directionPenalty
                     if (structuredSearch) {
                         c += SEARCH_RANGE_WEIGHT * rangeRisk(path.x, path.y, incoming.sourceX, incoming.sourceY, targetRange)
                     }
@@ -171,6 +174,9 @@ class Surfer {
                     }
                     c += profile.wallWeight * wallRisk(path.x, path.y, fieldWidth, fieldHeight)
                     c += SEARCH_RANGE_WEIGHT * rangeRisk(path.x, path.y, incoming.sourceX, incoming.sourceY, targetRange)
+                    if (preferredDirection != null && path.firstOrbitDir != 0 && path.firstOrbitDir != preferredDirection) {
+                        c += directionPenalty
+                    }
                     c += Math.random() * profile.tieNoise
                     if (c < bestCost) {
                         bestCost = c

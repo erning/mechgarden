@@ -1,6 +1,7 @@
 package zen.mirage
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -25,6 +26,9 @@ class RamThreatDetectorTest {
         detector.observe(frame(time = 6, distance = 475.0, advancing = 8.0, lateral = 0.0, distanceRate = -5.0))
 
         assertTrue(detector.active())
+        assertTrue(detector.snapshot().confidence >= 0.3)
+        assertEquals((475.0 - Kinematics.HALF_BOT * 2.0) / 5.0, detector.snapshot().collisionTicks, 1e-9)
+        assertEquals(Angles.PI, detector.snapshot().pursuitHeadingRadians, 1e-9)
     }
 
     @Test
@@ -54,6 +58,7 @@ class RamThreatDetectorTest {
         detector.recordCollision()
 
         assertTrue(detector.active())
+        assertEquals(0.0, detector.snapshot().collisionTicks, 1e-9)
     }
 
     private fun frame(

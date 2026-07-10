@@ -96,6 +96,8 @@ community archive with `just refs`.
 | `gigarumble` | Larger GigaRumble-oriented benchmark set |
 | `roborumble-100` | 100-robot Robocode rumble benchmark set |
 | `mirage-negative-knnpbi` | Ten lowest-KNNPBI Mirage 0.9.2 RoboRumble pairings (2026-07-10 snapshot) |
+| `mirage-knnpbi-11-100` | KNNPBI ranks 11-100 for Mirage 0.9.2 (2026-07-10 snapshot) |
+| `mirage-low-aps` | Ten lowest local APS pairings from the KNNPBI ranks 11-100 catalog |
 
 ```bash
 just refs download --catalog basic

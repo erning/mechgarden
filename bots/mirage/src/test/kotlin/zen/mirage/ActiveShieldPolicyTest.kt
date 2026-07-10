@@ -17,6 +17,8 @@ class ActiveShieldPolicyTest {
         policy.beginRound()
 
         assertTrue(policy.activeForRound())
+        assertTrue(policy.trialForRound())
+        assertFalse(policy.latchedForRound())
     }
 
     @Test
@@ -36,6 +38,7 @@ class ActiveShieldPolicyTest {
         policy.beginRound()
 
         assertTrue(policy.activeForRound())
+        assertTrue(policy.latchedForRound())
     }
 
     @Test
@@ -48,6 +51,25 @@ class ActiveShieldPolicyTest {
         }
         repeat(2) {
             policy.recordRound(dealt = 20.0, taken = 50.0, survived = true, usedActiveShield = true)
+        }
+        policy.beginRound()
+
+        assertFalse(policy.activeForRound())
+    }
+
+    @Test
+    fun doesNotScheduleATrialFromARamThreatRound() {
+        val policy = ActiveShieldPolicy()
+
+        repeat(5) {
+            policy.beginRound()
+            policy.recordRound(
+                dealt = 20.0,
+                taken = 75.0,
+                survived = false,
+                usedActiveShield = false,
+                ramThreat = true,
+            )
         }
         policy.beginRound()
 

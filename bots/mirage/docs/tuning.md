@@ -60,7 +60,10 @@ JDK_JAVA_OPTIONS="-Dmirage.debug=true" python3 scripts/duel.py -r mirage -e roni
 | `mirage.dchalflife` | `0`–∞ | DC（KNN）枪的近期加权半衰期（单位：观测数）。每个邻居在密度估计中的权重按 `0.5^(age/halflife)` 衰减，age 为其后又积累的观测数。`0`=均匀（无近期加权，旧行为）。见第 3.6 节。 | `400` |
 | `mirage.dcclear` | `on` \| `off` | 是否在新回合清除 DC 枪未解析的 pending 波；`off` 复现跨回合污染旧行为。已解析观测始终保留。 | `on` |
 | `mirage.antiram` | `on` \| `off` | 是否按接近速度、航向、横向速度和碰撞证据识别追撞者，并在 latch 生效时切换近距离高火力。 | `on` |
+| `mirage.ramescape` | `on` \| `off` | 只控制 Phase 8 的 anti-ram 逃逸移动；`off` 保留近距离火力响应。 | `on` |
 | `mirage.activeshield` | `force` \| `off` | `force`=每回合强制主动弹盾；`off`=禁用。缺省由跨回合 A/B 选择器决定。 | `adaptive` |
+| `mirage.shotdodger` | `on` \| `off` \| `force` | 控制简单枪专家选择；`force` 跳过置信度门槛，仅供诊断。 | `on` |
+| `mirage.shotweight` | `0`–∞ | 最佳简单枪专家叠加到 surf danger 的归一化峰值权重。 | `0.55` |
 
 例如测一个固定移动 profile：
 
@@ -432,8 +435,122 @@ battle/JVM 内存中按对手保留。
 模拟和追击预测枪没有进入本轮：
 较小的行为识别、火力切换和主动弹盾已经使全部目标达标，继续扩展只会增加回归面。
 
+### Phase 8 · 低 APS 对手优化：Anti-ram 逃逸移动
+
+Phase 7 的 `RamThreatDetector` 只切换近距离火力，不改变移动。第二轮目标取
+`mirage-knnpbi-11-100` 中本地 APS 最低的 10 个对手；诊断确认其中包含硬 rammer、
+条件式 rammer 和完全不碰撞的长距离对手，所有策略继续按行为触发。
+
+新增 `AntiRamPlanner`：
+
+- `RamThreatDetector.Snapshot` 暴露置信度、预计碰撞时间和追击方向；
+- 对左右两条逃逸走廊模拟 28 tick 的自身运动与简单 pursuer，比较最小距离、最终
+  距离、墙面空间和近距离压力；
+- 非紧急状态只给 surfer 一个有上限的方向偏好，并禁止停车；
+- 碰撞紧迫或 `onHitRobot` 后 18 tick 内，沿敌人到 Mirage 的径向外侧偏转 35°，
+  直接驶向更开放的走廊；
+- 主动弹盾已经通过跨回合试验锁定时，弹盾优先，暂停 anti-ram 移动，避免破坏拦截
+  几何；
+- `mirage.ramescape=off` 只关闭新移动，保留 Phase 7 的 anti-ram 火力，供 A/B 使用。
+
+第一版只改变 surfer 环绕方向。它把 SledgeHammer 的碰撞从每回合几十次降到个位数，
+却让双方在约 40 px 距离长时间并行，敌方命中率升至 70%～90%，`taken/r` 超过 100；
+因此拒绝。最终版增加径向外逃分量后保留。
+
+`mirage-low-aps` 的 `3 次 × 100 回合` 结果：
+
+| 对手 | 基线 APS | 候选 APS | Δ |
+|---|---:|---:|---:|
+| `sul.Bicephal 1.2` | 65.24 | 70.08 | +4.84 |
+| `gh.micro.GrubbmThree 1.01` | 64.80 | 68.84 | +4.04 |
+| `demetrix.nano.SledgeHammer 0.22` | 65.10 | 70.85 | +5.75 |
+| `benhorner.PureAggression 0.2.6` | 66.75 | 75.92 | +9.17 |
+| `wiki.WaveRammer 1.0` | 64.54 | 71.35 | +6.81 |
+| `exauge.LemonDrop 1.6.130` | 64.12 | 65.96 | +1.84 |
+| `oog.nano.Caligula 1.15` | 65.29 | 77.65 | +12.36 |
+| `wompi.Kowari 1.6` | 66.22 | 70.88 | +4.66 |
+| `suzushin7.nano.Galaxy03 1.01` | 69.11 | 76.20 | +7.09 |
+| `jcs.AutoBot 4.2.1` | 70.44 | 70.01 | −0.43 |
+| **等权平均** | **66.16** | **71.78** | **+5.62** |
+
+Survival 从 87.43% 提高到 95.06%。`taken/r` 从 44.2 升到约 57.7，因为逃逸移动把
+大量碰撞击杀转换成双方继续发射子弹的回合；现有 `taken/r` 只统计子弹伤害，不含
+每次 0.6 的碰撞能量损失。APS 和 survival 同时明显上升，说明该变化不是防御回退。
+
+防回归：
+
+| 目录或对手 | 候选 | 对照 | ΔAPS |
+|---|---:|---:|---:|
+| `mirage-knnpbi-11-100` | 86.42 | 81.78（此前两遍均值） | +4.64 |
+| `classic + expert + top` | 45.62 | 45.46（`mirage.antiram=off`） | +0.16 |
+| `roborumble-100` | 52.84（两遍均值） | 53.20（`mirage.ramescape=off`） | −0.36 |
+| Saguaro 1.0 | 54.95 | 48.91（`mirage.ramescape=off`） | +6.04 |
+| Knight 0.6.28 | 37.48 | 35.83（`mirage.ramescape=off`） | +1.65 |
+| PrairieWolf 2.61 | 51.18 | 47.47（`mirage.antiram=off`） | +3.71 |
+
+`roborumble-100` 的 −0.36 小于该目录的 0.5 APS 验收容差，强敌 9 对手汇总与两个
+疑似敏感对手专项均无一致性回归。最终候选默认开启。
+
+### Phase 9 · `ShotDodger-lite` 与得分压制实验
+
+#### 简单枪专家
+
+`ShotDodger` 在每条真实敌浪创建时分别固化 Head-on、Linear、Circular 和
+Wall-linear 的预测 GF。敌弹命中时，用真实 GF 计算四个专家的误差；敌浪未命中但
+某条预测弹道穿过 Mirage 实际覆盖的 hull 区间时，只给对应专家记一次失准。统计按
+对手保存在 battle/JVM 内存中，跨回合保留，不写数据文件。
+
+只有同时满足以下条件时才叠加专家 danger 峰：
+
+- 至少 8 个有效观测；
+- 滚动准确率至少为 0.62；
+- 相对当前预测不同的次优专家领先至少 0.12；
+- 连续失准少于 3 次。
+
+启用后，把归一化权重 0.55 的指数峰叠加到原 empirical danger，不替换现有
+wave surfing；连续 3 次失准会立即回退。`mirage.shotdodger=off` 是纯 A/B 对照，
+`mirage.shotweight` 可调整峰值权重。LemonDrop、RaikoMX 和 Lacrimas 的准确率长期
+只有约 0.1～0.2，调试日志确认没有启用；Bicephal 稳定选择 Linear，Kowari 间歇
+选择 Linear，GrubbmThree 主要选择 Circular 或 Wall-linear。
+
+实际启用的三个目标执行 `3 次 × 100 回合` A/B：
+
+| 对手 | 候选 APS | `shotdodger=off` | ΔAPS |
+|---|---:|---:|---:|
+| Bicephal | 71.67 | 69.86 | +1.81 |
+| Kowari | 71.14 | 71.01 | +0.13 |
+| GrubbmThree | 69.49 | 69.17 | +0.32 |
+| **等权平均** | **70.77** | **70.01** | **+0.76** |
+
+三对手 Survival 为 97.11%/96.89%，`taken/r` 为 71.48/74.57。完整
+`mirage-low-aps` 单次 100 回合 A/B 为 72.31/71.04 APS、95.80%/93.79%
+Survival、56.9/58.3 `taken/r`。最终无 override 的 35 回合复验为 72.03 APS、
+93.99% Survival，10 个目标全部达到 65 APS 或以上。因此专家层默认开启。
+
+防回归结果：`mirage-knnpbi-11-100` 为 86.32 APS、98.76% Survival；
+`roborumble-100` 为 52.63 APS，与 Phase 8 两遍均值 52.84 相差 −0.21。强敌调试
+中 `appliedWaves=0`，A/B 分差来自部分参考机器人不受 `--seed` 控制的自建随机数。
+PrairieWolf 同样全程未启用专家；两次 100 回合候选均值为 50.40 APS。
+
+#### Phase 3 负面实验
+
+三个后续方案均未进入默认行为：
+
+1. 对已确认专家测试 gun-heat-timed `brake` 和 `shift`。三个目标 100 回合等权 APS
+   分别为 70.08、71.35，普通移动为 71.59；`taken/r` 分别为 76.5、70.9、69.5。
+   两种时机移动均删除。
+2. 把主动弹盾 trial 扩展到“存活但单回合高伤”对手。LemonDrop 与 AutoBot 的
+   100 回合等权结果为 68.84 APS、86.5% Survival，对照为 70.67、89.0%；
+   `taken/r` 也没有下降，因此扩展 trial 删除。
+3. 比较普通攻击、强制主动弹盾和完全不开火。两对手 35 回合等权 APS 分别为
+   73.21、60.69、19.39，普通攻击显著最好。
+
+保留一项安全修复：`ActiveShieldPolicy` 不从已识别 ram 回合安排试验；未验证 trial
+在本回合检测到 ram 后立即让位给 anti-ram。只有已经通过跨回合效用比较并锁定的
+主动弹盾继续保持优先级。
+
 ## 参考
 
-- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,PreciseMea,MovementProfileSelector,FirePowerSelector,ActiveShieldGun,ActiveShieldPolicy,RamThreatDetector}.kt`
+- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,PreciseMea,MovementProfileSelector,FirePowerSelector,ActiveShieldGun,ActiveShieldPolicy,RamThreatDetector,AntiRamPlanner,ShotDodger,SimulatedTargeting,Surfer}.kt`
   ——诊断与 override 的实现。
 - [RoboRumble / LiteRumble 评分指标说明](../../../docs/rumble-metrics.md) —— APS / PWIN / Survival 定义。

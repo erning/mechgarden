@@ -73,6 +73,9 @@ class EnemyWave(
      *  using their prior-tick scan, so this may differ from the fire-time GF
      *  zero in [directAngleRadians]. */
     val shieldHeadingRadians: Double = directAngleRadians,
+    /** Separate simple-gun predictions captured at fire time for ShotDodger-lite.
+     *  Null for waves that should not train the selector. */
+    val simpleTargetPredictions: SimulatedTargeting.Predictions? = null,
 ) {
     /** GF interval our hull covered while the front crossed it (NaN until crossing). */
     var coveredLowGf: Double = Double.NaN

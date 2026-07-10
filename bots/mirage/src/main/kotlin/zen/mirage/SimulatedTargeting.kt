@@ -22,6 +22,23 @@ import kotlin.math.sin
  * danger distribution over guess factors.
  */
 object SimulatedTargeting {
+    enum class Expert {
+        HEAD_ON,
+        LINEAR,
+        CIRCULAR,
+        WALL_LINEAR,
+    }
+
+    data class Predictions(
+        val guessFactors: DoubleArray,
+    ) {
+        init {
+            require(guessFactors.size == Expert.values().size)
+        }
+
+        operator fun get(expert: Expert): Double = guessFactors[expert.ordinal]
+    }
+
     private const val BINS = GuessFactorDanger.BINS
     private const val MID = BINS / 2
 
@@ -68,6 +85,74 @@ object SimulatedTargeting {
         for (v in out) sum += v
         if (sum > 0.0) for (i in 0 until BINS) out[i] /= sum
         return out
+    }
+
+    /** Per-expert firing guess factors for ShotDodger-lite. Unlike [dangerGf],
+     *  this keeps each model separate so its realized error can be learned per
+     *  opponent instead of permanently blending all simple-gun priors. */
+    @Suppress("kotlin:S107")
+    fun predictions(
+        sourceX: Double,
+        sourceY: Double,
+        usX: Double,
+        usY: Double,
+        usHeadingRadians: Double,
+        usVelocity: Double,
+        usTurnRateRadians: Double,
+        directAngleRadians: Double,
+        orbitDirection: Int,
+        maxEscapeRadians: Double,
+        bulletSpeed: Double,
+        fieldWidth: Double,
+        fieldHeight: Double,
+    ): Predictions {
+        val linearAngleRadians =
+            leadAngle(
+                sourceX,
+                sourceY,
+                usX,
+                usY,
+                usHeadingRadians,
+                usVelocity,
+                bulletSpeed,
+                stopAtWall = false,
+                fieldWidth,
+                fieldHeight,
+            )
+        val circularAngleRadians =
+            circularLeadAngle(
+                sourceX,
+                sourceY,
+                usX,
+                usY,
+                usHeadingRadians,
+                usVelocity,
+                usTurnRateRadians,
+                bulletSpeed,
+                fieldWidth,
+                fieldHeight,
+            )
+        val wallLinearAngleRadians =
+            leadAngle(
+                sourceX,
+                sourceY,
+                usX,
+                usY,
+                usHeadingRadians,
+                usVelocity,
+                bulletSpeed,
+                stopAtWall = true,
+                fieldWidth,
+                fieldHeight,
+            )
+        return Predictions(
+            doubleArrayOf(
+                0.0,
+                gfOf(linearAngleRadians, directAngleRadians, orbitDirection, maxEscapeRadians),
+                gfOf(circularAngleRadians, directAngleRadians, orbitDirection, maxEscapeRadians),
+                gfOf(wallLinearAngleRadians, directAngleRadians, orbitDirection, maxEscapeRadians),
+            ),
+        )
     }
 
     /** Add an exponential-kernel peak of [weight] centered at guess factor [gf]. */
@@ -123,4 +208,40 @@ object SimulatedTargeting {
         }
         return Angles.absoluteBearing(sourceX, sourceY, px, py)
     }
+
+    /** Iterative constant-turn-rate lead. The projected target stops at field
+     *  bounds rather than walking outside the legal battlefield. */
+    @Suppress("kotlin:S107")
+    private fun circularLeadAngle(
+        sourceX: Double,
+        sourceY: Double,
+        usX: Double,
+        usY: Double,
+        usHeadingRadians: Double,
+        usVelocity: Double,
+        usTurnRateRadians: Double,
+        bulletSpeed: Double,
+        fieldWidth: Double,
+        fieldHeight: Double,
+    ): Double {
+        var px = usX
+        var py = usY
+        var headingRadians = usHeadingRadians
+        var ticks = 0
+        while (ticks < MAX_LEAD_TICKS) {
+            val distance = kotlin.math.hypot(px - sourceX, py - sourceY)
+            if (ticks * bulletSpeed >= distance) break
+            headingRadians = Angles.normalizeAbsolute(headingRadians + usTurnRateRadians)
+            px =
+                (px + sin(headingRadians) * usVelocity)
+                    .coerceIn(Kinematics.HALF_BOT, fieldWidth - Kinematics.HALF_BOT)
+            py =
+                (py + cos(headingRadians) * usVelocity)
+                    .coerceIn(Kinematics.HALF_BOT, fieldHeight - Kinematics.HALF_BOT)
+            ticks++
+        }
+        return Angles.absoluteBearing(sourceX, sourceY, px, py)
+    }
+
+    private const val MAX_LEAD_TICKS = 200
 }

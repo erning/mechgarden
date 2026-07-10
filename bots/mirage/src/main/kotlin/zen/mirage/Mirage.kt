@@ -40,6 +40,7 @@ abstract class Mirage : AdvancedRobot() {
     private val motion = MotionController(this)
     private val gun = Gun(this)
     private val surfer = Surfer()
+    private val shotDodger = ShotDodger()
     private val fireDetector by lazy { FireDetector(gunCoolingRate) }
     private val waves = EnemyWaveTracker()
     private val shadows = BulletShadows()
@@ -88,11 +89,13 @@ abstract class Mirage : AdvancedRobot() {
     /** Diagnostics counters (mirage.debug round summary). */
     private val engagementStats = EngagementStats()
     private val ramThreatDetector = RamThreatDetector()
+    private val antiRamPlanner = AntiRamPlanner()
     private val activeShieldGun = ActiveShieldGun(this)
     private var bulletsFired = 0
     private var bulletsHit = 0
     private var bulletPowerFired = 0.0
     private var activeShieldUsedThisRound = false
+    private var ramThreatSeenThisRound = false
 
     /** GF histogram of where enemy bullets hit us (mirage.debug), in 11 bins
      *  from GF -1 to +1. Reveals whether a gun has locked onto a movement
@@ -190,6 +193,39 @@ abstract class Mirage : AdvancedRobot() {
                 meaPos = theoryMea
                 meaNeg = theoryMea
             }
+            val simpleTargetPredictions =
+                SimulatedTargeting.predictions(
+                    shooter.x,
+                    shooter.y,
+                    shotUs.x,
+                    shotUs.y,
+                    shotUs.headingRadians,
+                    shotUs.velocity,
+                    observedTurnRateRadians(shotUs, tracker.previous?.self),
+                    sourceToUs,
+                    lastOrbitDirection,
+                    maxEscapeRadians,
+                    bulletSpeed,
+                    battleFieldWidth,
+                    battleFieldHeight,
+                )
+            val baseDanger =
+                surfer.bakeDangerWithPrior(
+                    features,
+                    shooter.x,
+                    shooter.y,
+                    shotUs.x,
+                    shotUs.y,
+                    shotUs.headingRadians,
+                    shotUs.velocity,
+                    sourceToUs,
+                    lastOrbitDirection,
+                    maxEscapeRadians,
+                    bulletSpeed,
+                    battleFieldWidth,
+                    battleFieldHeight,
+                    survivalPolicy.simulatedPriorWeight,
+                )
             val wave =
                 EnemyWave(
                     sourceX = shooter.x,
@@ -200,29 +236,14 @@ abstract class Mirage : AdvancedRobot() {
                     directAngleRadians = sourceToUs,
                     orbitDirection = lastOrbitDirection,
                     features = features,
-                    dangerBins =
-                        surfer.bakeDangerWithPrior(
-                            features,
-                            shooter.x,
-                            shooter.y,
-                            shotUs.x,
-                            shotUs.y,
-                            shotUs.headingRadians,
-                            shotUs.velocity,
-                            sourceToUs,
-                            lastOrbitDirection,
-                            maxEscapeRadians,
-                            bulletSpeed,
-                            battleFieldWidth,
-                            battleFieldHeight,
-                            survivalPolicy.simulatedPriorWeight,
-                        ),
+                    dangerBins = shotDodger.augmentDanger(baseDanger, simpleTargetPredictions),
                     maxEscapeRadians = maxEscapeRadians,
                     maxEscapePositive = meaPos,
                     maxEscapeNegative = meaNeg,
                     // This paired frame is the prior scan used by classic
                     // one-tick-late gun commands (Saguaro shield option 0).
                     shieldHeadingRadians = sourceToUs,
+                    simpleTargetPredictions = simpleTargetPredictions,
                 )
             waves.add(wave)
             shadows.onWave(wave, time)
@@ -236,6 +257,14 @@ abstract class Mirage : AdvancedRobot() {
 
         val frame = tracker.onScan(e, self, battleFieldWidth, battleFieldHeight)
         ramThreatDetector.observe(frame)
+        val ramThreat = ramThreatDetector.snapshot()
+        if (ramThreat.active) ramThreatSeenThisRound = true
+        val antiRamPlan =
+            if (ramEscapeEnabled()) {
+                antiRamPlanner.plan(frame, ramThreat, battleFieldWidth, battleFieldHeight)
+            } else {
+                null
+            }
         val wallSpace =
             minOf(
                 frame.self.x - Kinematics.HALF_BOT,
@@ -253,6 +282,7 @@ abstract class Mirage : AdvancedRobot() {
         // Passage bookkeeping: learn fully-passed waves as precise-interval visits.
         waves.sweep(time, x, y) {
             threatStats.recordWavePassed()
+            shotDodger.recordPass(it)
             surfer.learnVisit(it, x, y)
         }
 
@@ -284,7 +314,13 @@ abstract class Mirage : AdvancedRobot() {
         // Hold fire against a bullet-shielding opponent to stop burning our own
         // energy on shots that get intercepted.
         val holdFire = shieldDetector.holdFire
-        val activeShieldMode = activeShieldEnabled()
+        val activeShieldMode =
+            activeShieldEnabled() &&
+                (activeShieldForced() || !activeShieldGun.adaptiveTrial() || !ramThreat.active)
+        // A latched shield policy has already paid its exploration cost and
+        // demonstrated higher score utility, so it keeps priority over anti-ram.
+        // An unvalidated trial yields as soon as ram behavior is detected.
+        val movementAntiRamPlan = if (activeShieldMode) null else antiRamPlan
         if (activeShieldMode) activeShieldUsedThisRound = true
         val activeShieldPlan =
             if (activeShieldMode) {
@@ -316,13 +352,15 @@ abstract class Mirage : AdvancedRobot() {
         val endgameRange = endgameCloseRange(e.energy)
         val harvestRangeVal = harvestRange(harvestTier)
         // Priority: mirage.range debug override > endgame finish (Phase 1) >
-        // survival-policy override > threat-tier harvest (Phase 2) >
-        // advancing-velocity formula.
+        // anti-ram escape > survival-policy override > threat-tier harvest
+        // (Phase 2) > advancing-velocity formula.
         targetRange =
             if (rangeProp != null) {
                 rangeProp
             } else if (endgameRange != null) {
                 endgameRange
+            } else if (movementAntiRamPlan != null) {
+                movementAntiRamPlan.targetRange
             } else if (policyRange != null) {
                 policyRange
             } else if (harvestRangeVal != null) {
@@ -351,6 +389,8 @@ abstract class Mirage : AdvancedRobot() {
             // keeps the 20% bullet-kill bonus; ramming is a backup, gated on
             // enough energy to absorb the 0.6 self-damage per contact.
             motion.driveAlongRadians(Angles.absoluteBearing(x, y, frame.enemy.x, frame.enemy.y))
+        } else if (movementAntiRamPlan?.escapeHeadingRadians != null) {
+            motion.driveAlongRadians(movementAntiRamPlan.escapeHeadingRadians)
         } else {
             surfer.surf(
                 time,
@@ -363,8 +403,10 @@ abstract class Mirage : AdvancedRobot() {
                 activeMovementProfile,
                 targetRange,
                 survivalPolicy.dangerMode,
-                survivalPolicy.stopAllowed,
+                if (movementAntiRamPlan != null) false else survivalPolicy.stopAllowed,
                 virtualWave,
+                movementAntiRamPlan?.preferredDirection,
+                movementAntiRamPlan?.directionPenalty ?: 0.0,
             )
         }
 
@@ -383,6 +425,7 @@ abstract class Mirage : AdvancedRobot() {
     override fun onHitByBullet(event: HitByBulletEvent) {
         val hitWave = waves.matchBullet(time, event.bullet.x, event.bullet.y, event.bullet.velocity)
         if (hitWave != null) {
+            shotDodger.recordHit(hitWave, event.bullet.x, event.bullet.y)
             surfer.learnHit(hitWave, event.bullet.x, event.bullet.y)
             if (System.getProperty("mirage.debug") != null) {
                 val gf = hitWave.guessFactor(event.bullet.x, event.bullet.y)
@@ -398,6 +441,8 @@ abstract class Mirage : AdvancedRobot() {
     override fun onHitRobot(event: HitRobotEvent) {
         engagementStats.recordCollision(event.isMyFault)
         ramThreatDetector.recordCollision()
+        antiRamPlanner.recordCollision()
+        ramThreatSeenThisRound = true
     }
 
     override fun onBulletMissed(event: BulletMissedEvent) {
@@ -422,6 +467,7 @@ abstract class Mirage : AdvancedRobot() {
             damageThisRound,
             survived = energy > 0.0,
             usedActiveShield = activeShieldUsedThisRound,
+            ramThreat = ramThreatSeenThisRound,
         )
         movementSelector.recordDamage(damageThisRound)
         harvest.recordRound(threatStats.enemyHitRate(), threatStats.wavesObserved(), damageThisRound)
@@ -446,6 +492,8 @@ abstract class Mirage : AdvancedRobot() {
                     "ticks=$time " +
                     engagementStats.debugSummary() + " " +
                     ramThreatDetector.debugSummary() + " " +
+                    antiRamPlanner.debugSummary() + " " +
+                    shotDodger.debugSummary() + " " +
                     activeShieldGun.debugSummary() + " " +
                     gun.debugStats() + " prof=$movementProfile policy=${survivalPolicy.kind} range=${"%.0f".format(targetRange)} " +
                     "hitGF=${hitGfBins.toList()} ehr=$enemyHitRateText",
@@ -457,6 +505,7 @@ abstract class Mirage : AdvancedRobot() {
         bulletsHit = 0
         bulletPowerFired = 0.0
         activeShieldUsedThisRound = false
+        ramThreatSeenThisRound = false
         engagementStats.reset()
         for (i in hitGfBins.indices) hitGfBins[i] = 0
     }
@@ -465,6 +514,7 @@ abstract class Mirage : AdvancedRobot() {
         survivalPolicySelector = SurvivalPolicySelector.forEnemy(name)
         survivalPolicy = survivalPolicySelector.policyForRound()
         surfer.adoptEnemy(name)
+        shotDodger.adoptEnemy(name)
         movementSelector = MovementProfileSelector.forEnemy(name)
         movementProfile = selectedMovementProfile()
         gun.adoptEnemy(name)
@@ -494,6 +544,16 @@ abstract class Mirage : AdvancedRobot() {
         } else {
             MovementProfileSelector.Profile.PURE_SURF
         }
+    }
+
+    private fun observedTurnRateRadians(
+        state: RobotState,
+        previous: RobotState?,
+    ): Double {
+        if (previous == null) return 0.0
+        val elapsedTicks = state.time - previous.time
+        if (elapsedTicks !in 1L..8L) return 0.0
+        return Angles.normalizeRelative(state.headingRadians - previous.headingRadians) / elapsedTicks.toDouble()
     }
 
     private fun virtualWave(
@@ -616,11 +676,29 @@ abstract class Mirage : AdvancedRobot() {
             else -> true
         }
 
+    /** A/B override for the movement half of anti-ram. `mirage.antiram=off`
+     *  remains the master switch and also disables the established close-range
+     *  firepower response; `mirage.ramescape=off` leaves that gun behavior intact
+     *  while removing only [AntiRamPlanner]. */
+    private fun ramEscapeEnabled(): Boolean {
+        if (!antiRamEnabled()) return false
+        return when (System.getProperty("mirage.ramescape")?.trim()?.lowercase()) {
+            "off", "false", "no" -> false
+            else -> true
+        }
+    }
+
     private fun activeShieldEnabled(): Boolean =
         when (System.getProperty("mirage.activeshield")?.trim()?.lowercase()) {
             "on", "true", "yes", "force" -> true
             "off", "false", "no" -> false
             else -> activeShieldGun.adaptiveReady()
+        }
+
+    private fun activeShieldForced(): Boolean =
+        when (System.getProperty("mirage.activeshield")?.trim()?.lowercase()) {
+            "on", "true", "yes", "force" -> true
+            else -> false
         }
 
     private companion object {

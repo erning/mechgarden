@@ -39,7 +39,7 @@ Tasks run through `just` and the checked-in Gradle wrapper.
 
 Use `just refs ...` to download, deploy, list, or index reference robots from
 `refs.jsonc`. Catalogs: `basic`, `classic`, `expert`, `top`, `gigarumble`,
-`roborumble-100`.
+`roborumble-100`, `mirage-negative-knnpbi`.
 
 ## Repository Layout
 

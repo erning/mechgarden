@@ -23,6 +23,11 @@ MDBG r=12 dealt=35.2 taken=54.0 fired=42 hit=4 avgPower=1.21 ticks=913 aim=GF_DC
 | `fired`/`hit` | 本回合实弹发射数 / 命中数（真实命中率 ≈ hit/fired）。 |
 | `avgPower` | 本回合实弹平均威力。 |
 | `ticks` | 本回合持续 tick 数，用于直接观察击杀时长。 |
+| `ram`/`ramTaken` | 碰撞次数、我方责任碰撞次数，以及碰撞伤害。 |
+| `minDist`/`close`/`wall`/`closing` | 最小距离、100/150 px 内停留 tick、最小墙距和最大接近速度。 |
+| `enemyPower` | 本回合检测到的敌方平均开火威力与开火次数。 |
+| `ramThreat` | 反撞击识别状态、证据 tick 和剩余 latch tick。 |
+| `ashield`/`shieldPolicy` | 主动弹盾规划、发射、拦截、未拦截计数，以及跨回合 A/B 选择状态。 |
 | `aim` | 本回合主用的瞄准模型（`GF_DC` 等，见 `VirtualGuns.Aim`）。 |
 | `dc` | DC（KNN）枪已解析的观测数；≥ `DC_PRIMARY_MIN`（45）后 DC 成为主枪。 |
 | `dcAcc` | DC 当前权重 profile 的滚动预测精度（0..1，`1/(1+(\|预测-实际\|/宽度)²)`）。 |
@@ -54,6 +59,8 @@ JDK_JAVA_OPTIONS="-Dmirage.debug=true" python3 scripts/duel.py -r mirage -e roni
 | `mirage.mea` | `theory` \| `precise` | 逃逸角：默认枪用精确 MEA、浪冲用理论 MEA（见第 3.5 节）；`theory`=枪与浪冲都用理论值，`precise`=浪冲也改用精确值。 | 枪=precise / 浪=theory |
 | `mirage.dchalflife` | `0`–∞ | DC（KNN）枪的近期加权半衰期（单位：观测数）。每个邻居在密度估计中的权重按 `0.5^(age/halflife)` 衰减，age 为其后又积累的观测数。`0`=均匀（无近期加权，旧行为）。见第 3.6 节。 | `400` |
 | `mirage.dcclear` | `on` \| `off` | 是否在新回合清除 DC 枪未解析的 pending 波；`off` 复现跨回合污染旧行为。已解析观测始终保留。 | `on` |
+| `mirage.antiram` | `on` \| `off` | 是否按接近速度、航向、横向速度和碰撞证据识别追撞者，并在 latch 生效时切换近距离高火力。 | `on` |
+| `mirage.activeshield` | `force` \| `off` | `force`=每回合强制主动弹盾；`off`=禁用。缺省由跨回合 A/B 选择器决定。 | `adaptive` |
 
 例如测一个固定移动 profile：
 
@@ -383,8 +390,50 @@ ECONOMY 1.4 上限是**生存特性**（全场撤它 survival −8.6，高威力
 
 该改动既消除了确定性错误，综合 A/B 也为正，作为本轮唯一默认行为改进保留。
 
+### Phase 7 · 负 KNNPBI 对手优化：反撞击与主动弹盾
+
+针对 `mirage-negative-knnpbi` 中 KNNPBI 最低的 10 个对手，先做 `3 × 100` 回合基线，
+等权 APS 为 36.76。诊断显示 Bulldozer 单回合可发生 6～63 次碰撞；PrairieWolf 则是
+另一类问题：碰撞很少，但基线 `taken/r` 78.13、`dealt/r` 20.01，长期被低效换血压制。
+
+反撞击采用行为识别，不使用对手名称：连续观察敌方推进速度、距离收缩、行进航向和
+横向速度，6 tick 证据后开启 40 tick latch；碰撞立即开启 latch。威胁生效时，枪切到
+`AGGRESSIVE` 并保留 1.2 火力地板。`mirage.antiram=off` 可恢复旧行为。仅这一处窄火力
+切换就让 Bulldozer 的 `3 × 100` 平均 APS 从 35.47 提到 70.23，其余 8 个非
+PrairieWolf 目标也全部超过 60 APS。
+
+PrairieWolf 使用主动弹盾：对最近、确实穿过当前机体的真实敌浪求恒速解析交点，从
+0.1 威力发射拦截弹；每条敌浪最多尝试一次。弹盾拥有炮塔时，普通枪仍更新虚拟枪、
+DC 和 tick-wave 学习，但不发射实弹；弹盾结果单独记账，不污染普通枪命中率。
+
+强制全局弹盾会把 `classic + expert` 6 对手等权 APS 从 60.84 降到 52.41，因此缺省
+使用回合级 A/B 选择器。普通模式发生“未存活、`taken >= 65`、`dealt <= 40`”时，
+只安排一个弹盾试验回合；至少积累 3 个普通回合、普通平均效用不高于 10，并取得
+2 个弹盾回合后，只有弹盾效用 `dealt - taken + 50 × survived` 高出普通模式 10
+以上才锁定。选择器状态只在当前
+battle/JVM 内存中按对手保留。
+
+最终 `3 × 100` 回合均值：
+
+| 对手 | 基线 APS | 候选 APS | Δ |
+|---|---:|---:|---:|
+| Bulldozer | 35.47 | 70.23 | +34.76 |
+| Machete | 34.44 | 60.87 | +26.43 |
+| ButtHead | 34.45 | 61.28 | +26.83 |
+| Tirunculus | 47.54 | 65.18 | +17.64 |
+| PrairieWolf | 26.96 | 54.78 | +27.82 |
+| MaxRisk | 35.07 | 62.83 | +27.76 |
+| SabreuseNano | 34.67 | 61.61 | +26.94 |
+| Sanguijuela | 34.89 | 63.44 | +28.55 |
+| NanoDeath | 39.47 | 64.35 | +24.88 |
+| Impact | 38.66 | 63.05 | +24.39 |
+
+10 对手等权 APS 从 36.76 提到约 62.76；最终无参数单遍复验为 62.88。复杂反撞击路径
+模拟和追击预测枪没有进入本轮：
+较小的行为识别、火力切换和主动弹盾已经使全部目标达标，继续扩展只会增加回归面。
+
 ## 参考
 
-- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,PreciseMea,MovementProfileSelector,FirePowerSelector}.kt`
+- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,PreciseMea,MovementProfileSelector,FirePowerSelector,ActiveShieldGun,ActiveShieldPolicy,RamThreatDetector}.kt`
   ——诊断与 override 的实现。
 - [RoboRumble / LiteRumble 评分指标说明](../../../docs/rumble-metrics.md) —— APS / PWIN / Survival 定义。

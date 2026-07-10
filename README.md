@@ -95,10 +95,12 @@ community archive with `just refs`.
 | `top` | DrussGT, ScalarR, BeepBoop |
 | `gigarumble` | Larger GigaRumble-oriented benchmark set |
 | `roborumble-100` | 100-robot Robocode rumble benchmark set |
+| `mirage-negative-knnpbi` | Ten lowest-KNNPBI Mirage 0.9.2 RoboRumble pairings (2026-07-10 snapshot) |
 
 ```bash
 just refs download --catalog basic
 just refs deploy --catalog expert
+just duel -r Mirage -c mirage-negative-knnpbi -n 35
 just refs list --all
 just refs list --all --query shadow
 ```

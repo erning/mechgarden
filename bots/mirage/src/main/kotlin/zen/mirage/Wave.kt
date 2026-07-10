@@ -69,6 +69,10 @@ class EnemyWave(
      *  fall back to [maxEscapeRadians]. */
     val maxEscapePositive: Double = maxEscapeRadians,
     val maxEscapeNegative: Double = maxEscapeRadians,
+    /** Enemy gun line predicted for active shielding. Many classic robots fire
+     *  using their prior-tick scan, so this may differ from the fire-time GF
+     *  zero in [directAngleRadians]. */
+    val shieldHeadingRadians: Double = directAngleRadians,
 ) {
     /** GF interval our hull covered while the front crossed it (NaN until crossing). */
     var coveredLowGf: Double = Double.NaN

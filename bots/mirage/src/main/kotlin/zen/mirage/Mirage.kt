@@ -5,6 +5,7 @@ import robocode.BulletHitBulletEvent
 import robocode.BulletHitEvent
 import robocode.BulletMissedEvent
 import robocode.HitByBulletEvent
+import robocode.HitRobotEvent
 import robocode.RoundEndedEvent
 import robocode.Rules
 import robocode.ScannedRobotEvent
@@ -85,9 +86,13 @@ abstract class Mirage : AdvancedRobot() {
     private var lastEnemyFirePower = DEFAULT_ENEMY_FIRE_POWER
 
     /** Diagnostics counters (mirage.debug round summary). */
+    private val engagementStats = EngagementStats()
+    private val ramThreatDetector = RamThreatDetector()
+    private val activeShieldGun = ActiveShieldGun(this)
     private var bulletsFired = 0
     private var bulletsHit = 0
     private var bulletPowerFired = 0.0
+    private var activeShieldUsedThisRound = false
 
     /** GF histogram of where enemy bullets hit us (mirage.debug), in 11 bins
      *  from GF -1 to +1. Reveals whether a gun has locked onto a movement
@@ -215,17 +220,35 @@ abstract class Mirage : AdvancedRobot() {
                     maxEscapeRadians = maxEscapeRadians,
                     maxEscapePositive = meaPos,
                     maxEscapeNegative = meaNeg,
+                    // This paired frame is the prior scan used by classic
+                    // one-tick-late gun commands (Saguaro shield option 0).
+                    shieldHeadingRadians = sourceToUs,
                 )
             waves.add(wave)
             shadows.onWave(wave, time)
         }
         if (firePower != null) {
+            engagementStats.recordEnemyFire(firePower)
             lastEnemyFirePower = firePower
             tracker.recordEnemyFire(firePower)
             survivalPolicySelector.recordEnemyFire(firePower)
         }
 
         val frame = tracker.onScan(e, self, battleFieldWidth, battleFieldHeight)
+        ramThreatDetector.observe(frame)
+        val wallSpace =
+            minOf(
+                frame.self.x - Kinematics.HALF_BOT,
+                battleFieldWidth - Kinematics.HALF_BOT - frame.self.x,
+                frame.self.y - Kinematics.HALF_BOT,
+                battleFieldHeight - Kinematics.HALF_BOT - frame.self.y,
+            )
+        engagementStats.recordScan(
+            time = time,
+            distance = frame.enemy.distance,
+            closingSpeed = -(frame.derived?.distanceRate ?: 0.0),
+            wallSpace = wallSpace,
+        )
 
         // Passage bookkeeping: learn fully-passed waves as precise-interval visits.
         waves.sweep(time, x, y) {
@@ -239,7 +262,15 @@ abstract class Mirage : AdvancedRobot() {
         // faster. ECONOMY otherwise — dropping the cap broadly self-disables us
         // against strong guns (validated: BALANCED-everywhere costs ~8 survival).
         val harvestTier = harvest.tier(threatStats.enemyHitRate(), threatStats.wavesObserved())
-        if (harvestPowerEnabled()) {
+        // Reset to the round policy before applying per-scan tactical overrides.
+        // Otherwise one expired ram-threat latch would leave AGGRESSIVE selected
+        // for the rest of the round.
+        gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
+        gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
+        if (antiRamEnabled() && ramThreatDetector.active()) {
+            gun.setDefaultPowerProfile(FirePowerSelector.Profile.AGGRESSIVE)
+            gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
+        } else if (harvestPowerEnabled()) {
             if (harvestTier == HarvestController.Tier.LOW) {
                 gun.setDefaultPowerProfile(FirePowerSelector.Profile.BALANCED)
                 gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
@@ -253,10 +284,25 @@ abstract class Mirage : AdvancedRobot() {
         // Hold fire against a bullet-shielding opponent to stop burning our own
         // energy on shots that get intercepted.
         val holdFire = shieldDetector.holdFire
-        val fired = gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire)
+        val activeShieldMode = activeShieldEnabled()
+        if (activeShieldMode) activeShieldUsedThisRound = true
+        val activeShieldPlan =
+            if (activeShieldMode) {
+                activeShieldGun.plan(time, waves.active, battleFieldWidth, battleFieldHeight)
+            } else {
+                null
+            }
+        val fired =
+            if (activeShieldPlan != null) {
+                // Keep all normal gun models current while the shield owns the turret.
+                gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire = true)
+                activeShieldGun.execute(activeShieldPlan)
+            } else {
+                gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire)
+            }
         if (fired != null) {
             shadows.onFire(fired, time, waves.active)
-            shieldDetector.onOurFire()
+            if (activeShieldPlan == null) shieldDetector.onOurFire()
             fireDetector.ourFire(fired.power)
             bulletsFired++
             bulletPowerFired += fired.power
@@ -329,7 +375,7 @@ abstract class Mirage : AdvancedRobot() {
     override fun onBulletHit(event: BulletHitEvent) {
         fireDetector.ourBulletHitEnemy(event.bullet.power)
         shadows.onBulletDead(event.bullet, time)
-        gun.recordBulletHit(event.bullet)
+        if (!activeShieldGun.recordBulletHit(event.bullet)) gun.recordBulletHit(event.bullet)
         dealtThisRound += Rules.getBulletDamage(event.bullet.power)
         bulletsHit++
     }
@@ -349,9 +395,14 @@ abstract class Mirage : AdvancedRobot() {
         damageThisRound += Rules.getBulletDamage(event.power)
     }
 
+    override fun onHitRobot(event: HitRobotEvent) {
+        engagementStats.recordCollision(event.isMyFault)
+        ramThreatDetector.recordCollision()
+    }
+
     override fun onBulletMissed(event: BulletMissedEvent) {
         shadows.onBulletGone(event.bullet)
-        gun.recordBulletMiss(event.bullet)
+        if (!activeShieldGun.recordBulletMiss(event.bullet)) gun.recordBulletMiss(event.bullet)
     }
 
     override fun onBulletHitBullet(event: BulletHitBulletEvent) {
@@ -359,11 +410,19 @@ abstract class Mirage : AdvancedRobot() {
         // it isn't mislearned as a passing visit.
         waves.matchBullet(time, event.hitBullet.x, event.hitBullet.y, event.hitBullet.velocity)
         shadows.onBulletDead(event.bullet, time)
-        shieldDetector.onIntercepted()
-        gun.recordBulletHitBullet(event.bullet)
+        if (!activeShieldGun.recordBulletHitBullet(event.bullet)) {
+            shieldDetector.onIntercepted()
+            gun.recordBulletHitBullet(event.bullet)
+        }
     }
 
     override fun onRoundEnded(event: RoundEndedEvent) {
+        activeShieldGun.recordRound(
+            dealtThisRound,
+            damageThisRound,
+            survived = energy > 0.0,
+            usedActiveShield = activeShieldUsedThisRound,
+        )
         movementSelector.recordDamage(damageThisRound)
         harvest.recordRound(threatStats.enemyHitRate(), threatStats.wavesObserved(), damageThisRound)
         survivalPolicySelector.recordRound(
@@ -385,6 +444,9 @@ abstract class Mirage : AdvancedRobot() {
                     "taken=${"%.1f".format(damageThisRound)} fired=$bulletsFired hit=$bulletsHit " +
                     "avgPower=${"%.2f".format(if (bulletsFired == 0) 0.0 else bulletPowerFired / bulletsFired)} " +
                     "ticks=$time " +
+                    engagementStats.debugSummary() + " " +
+                    ramThreatDetector.debugSummary() + " " +
+                    activeShieldGun.debugSummary() + " " +
                     gun.debugStats() + " prof=$movementProfile policy=${survivalPolicy.kind} range=${"%.0f".format(targetRange)} " +
                     "hitGF=${hitGfBins.toList()} ehr=$enemyHitRateText",
             )
@@ -394,6 +456,8 @@ abstract class Mirage : AdvancedRobot() {
         bulletsFired = 0
         bulletsHit = 0
         bulletPowerFired = 0.0
+        activeShieldUsedThisRound = false
+        engagementStats.reset()
         for (i in hitGfBins.indices) hitGfBins[i] = 0
     }
 
@@ -404,6 +468,7 @@ abstract class Mirage : AdvancedRobot() {
         movementSelector = MovementProfileSelector.forEnemy(name)
         movementProfile = selectedMovementProfile()
         gun.adoptEnemy(name)
+        activeShieldGun.adoptEnemy(name)
         gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
         gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
         threatStats = ThreatStats.forEnemy(name)
@@ -544,6 +609,19 @@ abstract class Mirage : AdvancedRobot() {
     }
 
     private fun harvestPowerEnabled(): Boolean = System.getProperty("mirage.harvestpower")?.trim()?.lowercase() == "on"
+
+    private fun antiRamEnabled(): Boolean =
+        when (System.getProperty("mirage.antiram")?.trim()?.lowercase()) {
+            "off", "false", "no" -> false
+            else -> true
+        }
+
+    private fun activeShieldEnabled(): Boolean =
+        when (System.getProperty("mirage.activeshield")?.trim()?.lowercase()) {
+            "on", "true", "yes", "force" -> true
+            "off", "false", "no" -> false
+            else -> activeShieldGun.adaptiveReady()
+        }
 
     private companion object {
         const val DEFAULT_ENEMY_FIRE_POWER = 1.8

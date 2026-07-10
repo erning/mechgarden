@@ -30,8 +30,10 @@ class Gun(
     private val gfAccelGun = GfFireGun(9, retain = ROLLING_RETAIN)
     private val gfWallGun = GfFireGun(27)
     private var dcGun = DcGun()
+    private var dcAsGun = DcGun()
     private var firePowerSelector = FirePowerSelector()
     private var shieldAimSelector = ShieldAimSelector()
+    private var offenseStats = OffenseStats()
     private val turret = Turret(bot)
 
     /** Last aim used by [fireControl] (mirage.debug). */
@@ -51,10 +53,16 @@ class Gun(
      *  registry that survives the per-round rebuild). */
     fun adoptEnemy(name: String) {
         dcGun = DcGun.forEnemy(name)
+        dcAsGun = DcGun.forEnemyAs(name)
+        if (System.getProperty("mirage.dcclear")?.trim()?.lowercase() != "off") {
+            dcGun.beginRound()
+            dcAsGun.beginRound()
+        }
         firePowerSelector = FirePowerSelector.forEnemy(name)
         firePowerSelector.beginRound()
         shieldAimSelector = ShieldAimSelector.forEnemy(name)
         shieldAimSelector.beginRound()
+        offenseStats = OffenseStats.forEnemy(name)
     }
 
     fun setDefaultPowerProfile(profile: FirePowerSelector.Profile) {
@@ -83,6 +91,7 @@ class Gun(
         gfAccelGun.update(bot.time, enemy.x, enemy.y)
         gfWallGun.update(bot.time, enemy.x, enemy.y)
         dcGun.update(bot.time, enemy.x, enemy.y)
+        dcAsGun.update(bot.time, enemy.x, enemy.y)
 
         val lateralSpeed = derived?.lateralVelocity ?: 0.0
         val advancingSpeed = derived?.advancingVelocity ?: 0.0
@@ -103,14 +112,22 @@ class Gun(
         val aim =
             when (System.getProperty("mirage.aim") ?: "dc") {
                 "best" -> vguns.best()
-                else -> if (dcGun.size() >= DC_PRIMARY_MIN) VirtualGuns.Aim.GF_DC else vguns.best()
+                else ->
+                    when {
+                        dcGun.size() < DC_PRIMARY_MIN -> vguns.best()
+                        asGunEnabled() &&
+                            dcAsGun.size() >= DC_PRIMARY_MIN &&
+                            vguns.hitRate(VirtualGuns.Aim.GF_DC_AS) > vguns.hitRate(VirtualGuns.Aim.GF_DC) ->
+                            VirtualGuns.Aim.GF_DC_AS
+                        else -> VirtualGuns.Aim.GF_DC
+                    }
             }
         lastAim = aim
         val evPower = choosePower(vguns.hitRate(aim), distance)
         val energyLead = bot.energy - enemy.energy
         val dcFloor = dcFloorOverride()
         val tieredFloor = if (energyLead > ENERGY_LEAD_THRESHOLD) maxOf(AGGRESSIVE_FLOOR, dcFloor) else dcFloor
-        val baseFloor = if (aim == VirtualGuns.Aim.GF_DC) tieredFloor else Rules.MIN_BULLET_POWER
+        val baseFloor = if (aim == VirtualGuns.Aim.GF_DC || aim == VirtualGuns.Aim.GF_DC_AS) tieredFloor else Rules.MIN_BULLET_POWER
         val powerProfile = firePowerSelector.selectProfile(defaultPowerProfile)
         lastProfile = powerProfile
         val power = capPower(firePowerSelector.apply(powerProfile, evPower, baseFloor), bot.energy, enemy.energy)
@@ -198,6 +215,18 @@ class Gun(
                     ctx.orbitSign,
                     ctx.maxEscapeRadians,
                 )
+                if (asGunEnabled()) {
+                    dcAsGun.onFire(
+                        dcFeat,
+                        ctx.sourceX,
+                        ctx.sourceY,
+                        bot.time,
+                        ctx.bulletSpeed,
+                        ctx.directAngleRadians,
+                        ctx.orbitSign,
+                        ctx.maxEscapeRadians,
+                    )
+                }
                 firePowerSelector.onFire(powerProfile, bullet)
                 shieldAimSelector.onFire(shieldAimProfile, bullet)
                 return bullet
@@ -227,6 +256,11 @@ class Gun(
         System.getProperty("mirage.powerfloor")?.toDoubleOrNull()?.coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
             ?: defaultPowerFloor
 
+    /** Plan D (mirage.asgun): a second DC gun with a short recency half-life that
+     *  tracks a learning surfer's current dodge, arbitrated against the main DC
+     *  gun by virtual-gun hit rate. */
+    private fun asGunEnabled(): Boolean = System.getProperty("mirage.asgun")?.trim()?.lowercase() == "on"
+
     /** Precise MEA for a bullet *we* fire at the enemy: the largest bearing
      *  offset the enemy can reach from our gun before the bullet catches it.
      *  Clamped to [floor, theory]. Mirrors the surf-side computation so the gun
@@ -255,16 +289,19 @@ class Gun(
     }
 
     fun recordBulletHit(bullet: robocode.Bullet) {
+        offenseStats.recordHit()
         firePowerSelector.recordHit(bullet)
         shieldAimSelector.recordHit(bullet)
     }
 
     fun recordBulletMiss(bullet: robocode.Bullet) {
+        offenseStats.recordNonHit()
         firePowerSelector.recordMiss(bullet)
         shieldAimSelector.recordMiss(bullet)
     }
 
     fun recordBulletHitBullet(bullet: robocode.Bullet) {
+        offenseStats.recordNonHit()
         firePowerSelector.recordHitBullet(bullet)
         shieldAimSelector.recordHitBullet(bullet)
     }
@@ -273,8 +310,11 @@ class Gun(
      *  count, DC prediction accuracy, firepower profile, and per-aim virtual-gun
      *  hit rates. */
     fun debugStats(): String {
-        val rates = VirtualGuns.Aim.values().joinToString(",") { "${it.name.take(2)}=${"%.2f".format(vguns.hitRate(it))}" }
-        return "aim=$lastAim dc=${dcGun.size()} dcAcc=${"%.2f".format(dcGun.activeProfileRate())} fp=$lastProfile [$rates]"
+        val rates = VirtualGuns.Aim.values().joinToString(",") { "${AIM_LABELS[it.ordinal]}=${"%.2f".format(vguns.hitRate(it))}" }
+        val hitRate = offenseStats.hitRate()
+        val hitRateText = if (hitRate.isNaN()) "n/a" else "%.3f".format(hitRate)
+        return "aim=$lastAim dc=${dcGun.size()} dcAcc=${"%.2f".format(dcGun.activeProfileRate())} " +
+            "fp=$lastProfile ohr=$hitRateText@${offenseStats.resolvedShots()} [$rates]"
     }
 
     private fun angleForAim(
@@ -318,6 +358,12 @@ class Gun(
                 )
             VirtualGuns.Aim.GF_WALL -> gfWallGun.aimRadians(ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, wallSeg, halfBotGf)
             VirtualGuns.Aim.GF_DC -> dcGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
+            VirtualGuns.Aim.GF_DC_AS ->
+                if (asGunEnabled()) {
+                    dcAsGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
+                } else {
+                    dcGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
+                }
         }
 
     private fun anglesForVguns(
@@ -527,5 +573,6 @@ class Gun(
         private val REF_HALF_ANGLE = atan(Kinematics.HALF_BOT / REF_DISTANCE)
 
         private val AIM = VirtualGuns.Aim.values()
+        private val AIM_LABELS = arrayOf("HO", "LIN", "CIR", "GFD", "GFR", "GFA", "GFW", "DC", "AS")
     }
 }

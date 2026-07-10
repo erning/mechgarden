@@ -50,6 +50,14 @@ abstract class Mirage : AdvancedRobot() {
     private var survivalPolicySelector = SurvivalPolicySelector()
     private var survivalPolicy = SurvivalPolicySelector.DEFAULT
 
+    /** Per-enemy realized hit-rate against us (dodged vs connected waves). See
+     *  [ThreatStats]; accumulates across rounds via its static registry. */
+    private var threatStats = ThreatStats()
+
+    /** Per-enemy threat-tier distance ladder (Plan A, mirage.harvest). See
+     *  [HarvestController]; default on, `off` restores the old range behavior. */
+    private var harvest = HarvestController()
+
     /** Live engagement range — adapted per scan from the enemy's advancing velocity
      *  (charger → keep distance, kiter → close in) and threaded into the surfer. */
     private var targetRange = Distancing.BASE_TARGET
@@ -79,6 +87,7 @@ abstract class Mirage : AdvancedRobot() {
     /** Diagnostics counters (mirage.debug round summary). */
     private var bulletsFired = 0
     private var bulletsHit = 0
+    private var bulletPowerFired = 0.0
 
     /** GF histogram of where enemy bullets hit us (mirage.debug), in 11 bins
      *  from GF -1 to +1. Reveals whether a gun has locked onto a movement
@@ -116,7 +125,7 @@ abstract class Mirage : AdvancedRobot() {
         // Enemy fire detection from the *previous* paired snapshot (the shot was
         // fired last scan, from the enemy's then-position toward our then-position).
         val shooterFrame = tracker.current
-        val firePower = fireDetector.detect(time, e.energy)
+        val firePower = fireDetector.detect(time, e.energy, energy)
         if (firePower != null && shooterFrame != null) {
             val shooter = shooterFrame.enemy
             val shotUs = shooterFrame.self
@@ -219,7 +228,26 @@ abstract class Mirage : AdvancedRobot() {
         val frame = tracker.onScan(e, self, battleFieldWidth, battleFieldHeight)
 
         // Passage bookkeeping: learn fully-passed waves as precise-interval visits.
-        waves.sweep(time, x, y) { surfer.learnVisit(it, x, y) }
+        waves.sweep(time, x, y) {
+            threatStats.recordWavePassed()
+            surfer.learnVisit(it, x, y)
+        }
+
+        // Plan C.1 (mirage.harvestpower): against a low-threat enemy we hit
+        // reliably, let the gun pick BALANCED (maxPower 3.0) instead of the
+        // survival policy's ECONOMY cap, so EV can choose high power and finish
+        // faster. ECONOMY otherwise — dropping the cap broadly self-disables us
+        // against strong guns (validated: BALANCED-everywhere costs ~8 survival).
+        val harvestTier = harvest.tier(threatStats.enemyHitRate(), threatStats.wavesObserved())
+        if (harvestPowerEnabled()) {
+            if (harvestTier == HarvestController.Tier.LOW) {
+                gun.setDefaultPowerProfile(FirePowerSelector.Profile.BALANCED)
+                gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
+            } else {
+                gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
+                gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
+            }
+        }
 
         // Gun: adaptive lead + fire gate. A real bullet casts shadows on waves in flight.
         // Hold fire against a bullet-shielding opponent to stop burning our own
@@ -229,7 +257,9 @@ abstract class Mirage : AdvancedRobot() {
         if (fired != null) {
             shadows.onFire(fired, time, waves.active)
             shieldDetector.onOurFire()
+            fireDetector.ourFire(fired.power)
             bulletsFired++
+            bulletPowerFired += fired.power
         }
 
         // Dynamic engagement range: charger → keep distance, kiter → close in.
@@ -237,11 +267,20 @@ abstract class Mirage : AdvancedRobot() {
         smoothAdvancing = smoothAdvancing * 0.9 + (frame.derived?.advancingVelocity ?: 0.0) * 0.1
         val rangeProp = System.getProperty("mirage.range")?.toDoubleOrNull()
         val policyRange = survivalPolicy.targetRangeOverride
+        val endgameRange = endgameCloseRange(e.energy)
+        val harvestRangeVal = harvestRange(harvestTier)
+        // Priority: mirage.range debug override > endgame finish (Phase 1) >
+        // survival-policy override > threat-tier harvest (Phase 2) >
+        // advancing-velocity formula.
         targetRange =
             if (rangeProp != null) {
                 rangeProp
+            } else if (endgameRange != null) {
+                endgameRange
             } else if (policyRange != null) {
                 policyRange
+            } else if (harvestRangeVal != null) {
+                harvestRangeVal
             } else {
                 (Distancing.BASE_TARGET + RANGE_GAIN * smoothAdvancing).coerceIn(RANGE_LO, RANGE_HI)
             }
@@ -260,20 +299,28 @@ abstract class Mirage : AdvancedRobot() {
                 movementProfile
             }
         val virtualWave = virtualWave(frame, selfPose)
-        surfer.surf(
-            time,
-            selfPose,
-            frame,
-            waves.active,
-            motion,
-            battleFieldWidth,
-            battleFieldHeight,
-            activeMovementProfile,
-            targetRange,
-            survivalPolicy.dangerMode,
-            survivalPolicy.stopAllowed,
-            virtualWave,
-        )
+        if (endgameRange != null && endgameRamEnabled() && energy > RAM_MIN_ENERGY) {
+            // B.3 (mirage.endgame=ram): drive into the disabled enemy to finish
+            // via contact. The point-blank capPower bullet usually lands first and
+            // keeps the 20% bullet-kill bonus; ramming is a backup, gated on
+            // enough energy to absorb the 0.6 self-damage per contact.
+            motion.driveAlongRadians(Angles.absoluteBearing(x, y, frame.enemy.x, frame.enemy.y))
+        } else {
+            surfer.surf(
+                time,
+                selfPose,
+                frame,
+                waves.active,
+                motion,
+                battleFieldWidth,
+                battleFieldHeight,
+                activeMovementProfile,
+                targetRange,
+                survivalPolicy.dangerMode,
+                survivalPolicy.stopAllowed,
+                virtualWave,
+            )
+        }
 
         speedTwoAgo = speedOneAgo
         speedOneAgo = abs(velocity)
@@ -297,6 +344,7 @@ abstract class Mirage : AdvancedRobot() {
                 hitGfBins[bin]++
             }
         }
+        threatStats.recordHit()
         fireDetector.enemyBulletHitUs(event.power)
         damageThisRound += Rules.getBulletDamage(event.power)
     }
@@ -317,6 +365,7 @@ abstract class Mirage : AdvancedRobot() {
 
     override fun onRoundEnded(event: RoundEndedEvent) {
         movementSelector.recordDamage(damageThisRound)
+        harvest.recordRound(threatStats.enemyHitRate(), threatStats.wavesObserved(), damageThisRound)
         survivalPolicySelector.recordRound(
             survivalPolicy,
             survived = energy > 0.0,
@@ -324,17 +373,27 @@ abstract class Mirage : AdvancedRobot() {
             damageDealt = dealtThisRound,
         )
         if (System.getProperty("mirage.debug") != null) {
+            val enemyHitRate = threatStats.enemyHitRate()
+            val enemyHitRateText =
+                if (enemyHitRate.isNaN()) {
+                    "n/a"
+                } else {
+                    "%.3f@%d".format(enemyHitRate, threatStats.wavesObserved())
+                }
             out.println(
                 "MDBG r=${event.round + 1} dealt=${"%.1f".format(dealtThisRound)} " +
                     "taken=${"%.1f".format(damageThisRound)} fired=$bulletsFired hit=$bulletsHit " +
+                    "avgPower=${"%.2f".format(if (bulletsFired == 0) 0.0 else bulletPowerFired / bulletsFired)} " +
+                    "ticks=$time " +
                     gun.debugStats() + " prof=$movementProfile policy=${survivalPolicy.kind} range=${"%.0f".format(targetRange)} " +
-                    "hitGF=${hitGfBins.toList()}",
+                    "hitGF=${hitGfBins.toList()} ehr=$enemyHitRateText",
             )
         }
         dealtThisRound = 0.0
         damageThisRound = 0.0
         bulletsFired = 0
         bulletsHit = 0
+        bulletPowerFired = 0.0
         for (i in hitGfBins.indices) hitGfBins[i] = 0
     }
 
@@ -347,6 +406,8 @@ abstract class Mirage : AdvancedRobot() {
         gun.adoptEnemy(name)
         gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
         gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
+        threatStats = ThreatStats.forEnemy(name)
+        harvest = HarvestController.forEnemy(name)
     }
 
     private fun selectedMovementProfile(): MovementProfileSelector.Profile {
@@ -450,11 +511,49 @@ abstract class Mirage : AdvancedRobot() {
             else -> survivalPolicy.virtualWaves
         }
 
+    /** Endgame finish (Phase 1, mirage.endgame): against a disabled enemy (energy
+     *  drained to ~0 by self-fire or inactivity, alive but unable to act) with no
+     *  waves in flight, collapse to point-blank so Gun.capPower's lethal shot
+     *  lands immediately and the kill is credited to us before the engine's
+     *  inactivity zap takes it. Returns the override range, or null when inactive.
+     *  Disabled-but-alive is a real state: a bullet kill (BulletPeer) fires at
+     *  energy <= 0, but self-drain only zeroes and parks the robot. */
+    private fun endgameCloseRange(enemyEnergy: Double): Double? {
+        if (!endgameEnabled()) return null
+        if (enemyEnergy > ENDGAME_DISABLED_ENERGY) return null
+        if (waves.active.isNotEmpty()) return null
+        return ENDGAME_CLOSE_RANGE
+    }
+
+    private fun endgameEnabled(): Boolean {
+        val key = System.getProperty("mirage.endgame")?.trim()?.lowercase()
+        return key != "off"
+    }
+
+    private fun endgameRamEnabled(): Boolean = System.getProperty("mirage.endgame")?.trim()?.lowercase() == "ram"
+
+    /** Plan A threat-tier distance (`mirage.harvest`): against a low-threat
+     *  enemy, close down a ladder (350->300->260) to finish faster. `off` keeps
+     *  the old range; unset is the enabled default; a number forces a fixed range
+     *  for A/B. Returns null when no override applies. */
+    private fun harvestRange(tier: HarvestController.Tier): Double? {
+        val key = System.getProperty("mirage.harvest")?.trim()?.lowercase()
+        if (key == "off") return null
+        key?.toDoubleOrNull()?.let { return it }
+        return if (tier == HarvestController.Tier.LOW) harvest.lowRange() else null
+    }
+
+    private fun harvestPowerEnabled(): Boolean = System.getProperty("mirage.harvestpower")?.trim()?.lowercase() == "on"
+
     private companion object {
         const val DEFAULT_ENEMY_FIRE_POWER = 1.8
         const val RANGE_GAIN = 8.0
         const val RANGE_LO = 380.0
         const val RANGE_HI = 540.0
+        const val ENDGAME_DISABLED_ENERGY = 0.001
+        const val ENDGAME_CLOSE_RANGE = 90.0
+        const val RAM_MIN_ENERGY = 20.0
+        const val HARVEST_POWER_FLOOR = 1.2
         const val LOW_POWER_PROFILE_TICKS = 30L
         const val SHIELD_STATIONARY_PROFILE_TICKS = 12L
         const val MAX_VIRTUAL_PREDICTION_TICKS = 8L

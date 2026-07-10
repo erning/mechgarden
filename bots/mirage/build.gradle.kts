@@ -25,6 +25,7 @@ val deleteLegacyDeployedJar by tasks.registering(Delete::class) {
 
 dependencies {
     compileOnly(files(robocodeJar))
+    testImplementation(kotlin("test"))
 }
 
 tasks.named<Jar>("jar") {

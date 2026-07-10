@@ -104,7 +104,7 @@ class GfFireGun(
  * circular until another leads. Scores are recency-decayed.
  */
 class VirtualGuns {
-    enum class Aim { HEAD_ON, LINEAR, CIRCULAR, GF_DISTLAT, GF_ROLL, GF_ACCEL, GF_WALL, GF_DC }
+    enum class Aim { HEAD_ON, LINEAR, CIRCULAR, GF_DISTLAT, GF_ROLL, GF_ACCEL, GF_WALL, GF_DC, GF_DC_AS }
 
     private val score = DoubleArray(AIM.size)
     private var attempts = 0.0

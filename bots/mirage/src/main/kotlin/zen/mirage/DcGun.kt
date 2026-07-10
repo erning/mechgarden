@@ -24,6 +24,7 @@ import kotlin.math.roundToInt
 class DcGun(
     private val k: Int = dcKOverride(),
     private val bins: Int = 31,
+    private val halfLifeOverride: Double? = null,
 ) {
     private data class Pending(
         val features: DoubleArray,
@@ -58,6 +59,14 @@ class DcGun(
 
     private val scoreBuf = Array(CAP) { Score(0.0, 0.0) }
     private val histBuf = DoubleArray(bins)
+
+    /** Drop unresolved waves from the completed round while preserving learned
+     *  observations and profile scores. Robocode resets time to zero every round;
+     *  carrying a pending wave across that boundary would eventually resolve it
+     *  against an unrelated position in a later round and poison the DC buffer. */
+    fun beginRound() {
+        pending.clear()
+    }
 
     fun features(
         distance: Double,
@@ -163,7 +172,7 @@ class DcGun(
         // estimate. Half-life is in observations; <= 0 disables (uniform weight),
         // which is the A/B baseline. Carried on the Score so it survives the
         // quickselect reordering. (BeepBoop-style time-decay over a KNN buffer.)
-        val halfLife = recencyHalfLife()
+        val halfLife = halfLifeOverride ?: recencyHalfLife()
         val decayPerObs = if (halfLife > 0.0) StrictMath.pow(0.5, 1.0 / halfLife) else 1.0
         for (i in 0 until n) {
             val o = obs[i]
@@ -364,8 +373,20 @@ class DcGun(
                 WeightProfile("gigarumble-combined", doubleArrayOf(4.0, 0.68044, 0.266567, 0.575477, 0.460098, 0.497114)),
             )
 
+        /** Anti-surfer (Plan D) fast-decay variant: a second DC gun trained on
+         *  the same real-fire waves but with a much shorter recency half-life, so
+         *  it tracks a learning surfer's current dodge. Tunable via mirage.ashalflife. */
+        const val AS_DEFAULT_HALF_LIFE = 50.0
+
         private val perEnemy = HashMap<String, DcGun>()
 
         fun forEnemy(name: String): DcGun = perEnemy.getOrPut(name) { DcGun() }
+
+        private val perEnemyAs = HashMap<String, DcGun>()
+
+        fun forEnemyAs(name: String): DcGun =
+            perEnemyAs.getOrPut(name) {
+                DcGun(halfLifeOverride = System.getProperty("mirage.ashalflife")?.toDoubleOrNull() ?: AS_DEFAULT_HALF_LIFE)
+            }
     }
 }

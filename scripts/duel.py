@@ -345,6 +345,16 @@ def ref_candidates() -> list[RobotCandidate]:
         jar_path = refs.REFS_DIR / jar
         if not jar_path.is_file():
             continue
+        # A catalog entry names one downloaded JAR, whose conventional filename
+        # is <robot.class>_<version>.jar. Some reference JARs also bundle helper
+        # or sibling robots. Keep those robots directly selectable, but attach
+        # the JAR's catalog membership only to its primary class so a 100-entry
+        # catalog still expands to 100 opponents.
+        expected_class = Path(jar).stem.rsplit("_", 1)[0]
+        primary_class = next(
+            (robot.class_name for robot in robots if robot.class_name == expected_class),
+            robots[0].class_name if robots else None,
+        )
         for robot in robots:
             candidates.append(
                 RobotCandidate(
@@ -354,7 +364,7 @@ def ref_candidates() -> list[RobotCandidate]:
                     jar=jar,
                     source=jar_path,
                     origin="refs",
-                    catalogs=robot.catalogs,
+                    catalogs=robot.catalogs if robot.class_name == primary_class else (),
                 )
             )
     return candidates
@@ -422,6 +432,35 @@ def resolve_one(
     return found[0]
 
 
+def configured_catalog_jars() -> dict[str, list[str]]:
+    """Return each refs.jsonc catalog's JARs in its declared order."""
+    try:
+        data = json.loads(refs.strip_jsonc_comments(refs.CATALOG_PATH.read_text()))
+    except (OSError, json.JSONDecodeError, refs.UserError) as error:
+        raise UserError(f"cannot read {refs.CATALOG_PATH}: {error}") from error
+    if not isinstance(data, dict):
+        raise UserError(f"{refs.CATALOG_PATH}: root must be an object")
+    default_prefix = refs.require_string(
+        data.get("defaultUrlPrefix"), "defaultUrlPrefix"
+    )
+    raw_catalog = data.get("catalog")
+    if not isinstance(raw_catalog, dict):
+        raise UserError(f"{refs.CATALOG_PATH}: catalog must be an object")
+
+    ordered: dict[str, list[str]] = {}
+    for catalog, raw_keys in raw_catalog.items():
+        if not isinstance(catalog, str) or not isinstance(raw_keys, list):
+            raise UserError(f"{refs.CATALOG_PATH}: invalid catalog entry")
+        jars: list[str] = []
+        for position, raw_key in enumerate(raw_keys):
+            key = refs.require_string(raw_key, f"catalog.{catalog}[{position}]")
+            jars.append(
+                refs.file_name_from_url(refs.expand_url(default_prefix, key))
+            )
+        ordered[catalog] = jars
+    return ordered
+
+
 def match_catalogs(
     candidates: Sequence[RobotCandidate],
     catalog_queries: Sequence[str],
@@ -429,21 +468,37 @@ def match_catalogs(
     if not catalog_queries:
         return []
 
+    configured_order = configured_catalog_jars()
     catalog_names = list(
-        dict.fromkeys(catalog for candidate in candidates for catalog in candidate.catalogs)
+        dict.fromkeys(
+            [*configured_order]
+            + [catalog for candidate in candidates for catalog in candidate.catalogs]
+        )
     )
-    selected_catalogs: set[str] = set()
+    selected_catalogs: list[str] = []
     for query in catalog_queries:
         found = [catalog for catalog in catalog_names if matches(catalog, query)]
         if not found:
             raise UserError(f"no catalog matches '{query}'")
-        selected_catalogs.update(found)
+        for catalog in found:
+            if catalog not in selected_catalogs:
+                selected_catalogs.append(catalog)
 
-    return [
-        candidate
-        for candidate in candidates
-        if any(catalog in selected_catalogs for catalog in candidate.catalogs)
-    ]
+    candidates_by_jar = {
+        candidate.jar: candidate for candidate in candidates if candidate.catalogs
+    }
+    matched: dict[str, RobotCandidate] = {}
+    for catalog in selected_catalogs:
+        for jar in configured_order.get(catalog, ()):  # Preserve refs.jsonc order.
+            candidate = candidates_by_jar.get(jar)
+            if candidate is not None and catalog in candidate.catalogs:
+                matched.setdefault(candidate.selector, candidate)
+        # Keep working with an older index or a catalog that is absent from the
+        # current config, while appending those fallback members deterministically.
+        for candidate in candidates:
+            if catalog in candidate.catalogs:
+                matched.setdefault(candidate.selector, candidate)
+    return list(matched.values())
 
 
 def selected_enemies(

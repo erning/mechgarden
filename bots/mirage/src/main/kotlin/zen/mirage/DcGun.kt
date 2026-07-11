@@ -382,6 +382,12 @@ class DcGun(
 
         fun forEnemy(name: String): DcGun = perEnemy.getOrPut(name) { DcGun() }
 
+        /** Parallel, consistently theory-MEA-normalized model used only after a
+         *  target has been classified as a long-range stop-and-go mover. */
+        private val perEnemyTheory = HashMap<String, DcGun>()
+
+        fun forEnemyTheory(name: String): DcGun = perEnemyTheory.getOrPut(name) { DcGun() }
+
         private val perEnemyAs = HashMap<String, DcGun>()
 
         fun forEnemyAs(name: String): DcGun =

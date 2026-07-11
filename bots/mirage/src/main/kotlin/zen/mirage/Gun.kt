@@ -30,9 +30,11 @@ class Gun(
     private val gfAccelGun = GfFireGun(9, retain = ROLLING_RETAIN)
     private val gfWallGun = GfFireGun(27)
     private var dcGun = DcGun()
+    private var dcTheoryGun = DcGun()
     private var dcAsGun = DcGun()
     private var firePowerSelector = FirePowerSelector()
     private var shieldAimSelector = ShieldAimSelector()
+    private var stopGoDetector = StopGoDetector()
     private var offenseStats = OffenseStats()
     private val turret = Turret(bot)
 
@@ -41,6 +43,7 @@ class Gun(
 
     /** Last firepower profile selected (mirage.debug). */
     private var lastProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
+    private var lastTheoryMea = false
     private var defaultPowerProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
     private var defaultPowerFloor: Double = DC_POWER_FLOOR_BASE
 
@@ -53,15 +56,19 @@ class Gun(
      *  registry that survives the per-round rebuild). */
     fun adoptEnemy(name: String) {
         dcGun = DcGun.forEnemy(name)
+        dcTheoryGun = DcGun.forEnemyTheory(name)
         dcAsGun = DcGun.forEnemyAs(name)
         if (System.getProperty("mirage.dcclear")?.trim()?.lowercase() != "off") {
             dcGun.beginRound()
+            dcTheoryGun.beginRound()
             dcAsGun.beginRound()
         }
         firePowerSelector = FirePowerSelector.forEnemy(name)
         firePowerSelector.beginRound()
         shieldAimSelector = ShieldAimSelector.forEnemy(name)
         shieldAimSelector.beginRound()
+        stopGoDetector = StopGoDetector.forEnemy(name)
+        stopGoDetector.beginRound()
         offenseStats = OffenseStats.forEnemy(name)
     }
 
@@ -91,15 +98,25 @@ class Gun(
         gfAccelGun.update(bot.time, enemy.x, enemy.y)
         gfWallGun.update(bot.time, enemy.x, enemy.y)
         dcGun.update(bot.time, enemy.x, enemy.y)
+        dcTheoryGun.update(bot.time, enemy.x, enemy.y)
         dcAsGun.update(bot.time, enemy.x, enemy.y)
+        stopGoDetector.observe(enemy.time, enemy.velocity)
 
         val lateralSpeed = derived?.lateralVelocity ?: 0.0
         val advancingSpeed = derived?.advancingVelocity ?: 0.0
         val accel = derived?.acceleration ?: 0.0
         val turnRate = derived?.turnRateRadians ?: 0.0
         val distance = enemy.distance
+        val useTheoryMea = theoryMeaEnabled(distance)
+        lastTheoryMea = useTheoryMea
+        val activeDcGun = if (useTheoryMea) dcTheoryGun else dcGun
         val directAngleRadians = Angles.absoluteBearing(bot.x, bot.y, enemy.x, enemy.y)
-        val orbitSign = if (lateralSpeed >= 0.0) 1 else -1
+        val orbitSign =
+            if (System.getProperty("mirage.stickyorbit")?.trim()?.lowercase() == "off") {
+                if (lateralSpeed >= 0.0) 1 else -1
+            } else {
+                OrbitDirection.sign(lateralSpeed, derived?.lateralDirection ?: 0)
+            }
 
         // Aim selection. DC (KNN) is forced primary once it has learned enough — its
         // virtual-gun score under-reports the real hit rate (KNN peak-finding hits
@@ -114,8 +131,9 @@ class Gun(
                 "best" -> vguns.best()
                 else ->
                     when {
-                        dcGun.size() < DC_PRIMARY_MIN -> vguns.best()
-                        asGunEnabled() &&
+                        activeDcGun.size() < DC_PRIMARY_MIN -> vguns.best()
+                        !useTheoryMea &&
+                            asGunEnabled() &&
                             dcAsGun.size() >= DC_PRIMARY_MIN &&
                             vguns.hitRate(VirtualGuns.Aim.GF_DC_AS) > vguns.hitRate(VirtualGuns.Aim.GF_DC) ->
                             VirtualGuns.Aim.GF_DC_AS
@@ -151,12 +169,14 @@ class Gun(
         // resolve tighter against wall- or velocity-limited movers. The surfer keeps
         // theory MEA (its danger model was tuned under it and precise MEA made it
         // over-cautious); mirage.mea=theory reverts both to the textbook value.
-        val maxEscapeRadians =
-            if (System.getProperty("mirage.mea") == "theory") {
-                asin(Kinematics.MAX_VELOCITY / bulletSpeed)
+        val theoryEscapeRadians = asin(Kinematics.MAX_VELOCITY / bulletSpeed)
+        val preciseEscapeRadians =
+            if (useTheoryMea) {
+                Double.NaN
             } else {
                 gunMea(bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, distance)
             }
+        val maxEscapeRadians = if (useTheoryMea) theoryEscapeRadians else preciseEscapeRadians
         val halfBotGf = atan(Kinematics.HALF_BOT / distance) / maxEscapeRadians
 
         val distLatSeg = Segments.dist3(distance) * 3 + Segments.lat3(abs(lateralSpeed))
@@ -165,7 +185,7 @@ class Gun(
             distLatSeg * 3 +
                 Segments.wall3((tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (distance / bulletSpeed).coerceAtLeast(1.0))
         val dcFeat =
-            dcGun.features(
+            activeDcGun.features(
                 distance,
                 abs(lateralSpeed),
                 abs(advancingSpeed),
@@ -190,6 +210,7 @@ class Gun(
                 power = power,
                 bulletSpeed = bulletSpeed,
                 maxEscapeRadians = maxEscapeRadians,
+                useTheoryMea = useTheoryMea,
             )
 
         val rawSelected = angleForAim(aim, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight)
@@ -210,6 +231,12 @@ class Gun(
         if (!holdFire && bot.gunHeat == 0.0 && aligned && affordable && fresh && ctx.power >= Rules.MIN_BULLET_POWER) {
             val bullet = turret.fire(ctx.power)
             if (bullet != null) {
+                val preciseTrainingEscapeRadians =
+                    if (preciseEscapeRadians.isNaN()) {
+                        gunMea(ctx.bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, distance)
+                    } else {
+                        preciseEscapeRadians
+                    }
                 vguns.onFire(
                     ctx.sourceX,
                     ctx.sourceY,
@@ -226,7 +253,17 @@ class Gun(
                     ctx.bulletSpeed,
                     ctx.directAngleRadians,
                     ctx.orbitSign,
-                    ctx.maxEscapeRadians,
+                    preciseTrainingEscapeRadians,
+                )
+                dcTheoryGun.onFire(
+                    dcFeat,
+                    ctx.sourceX,
+                    ctx.sourceY,
+                    bot.time,
+                    ctx.bulletSpeed,
+                    ctx.directAngleRadians,
+                    ctx.orbitSign,
+                    theoryEscapeRadians,
                 )
                 if (asGunEnabled()) {
                     dcAsGun.onFire(
@@ -237,7 +274,7 @@ class Gun(
                         ctx.bulletSpeed,
                         ctx.directAngleRadians,
                         ctx.orbitSign,
-                        ctx.maxEscapeRadians,
+                        preciseTrainingEscapeRadians,
                     )
                 }
                 firePowerSelector.onFire(powerProfile, bullet)
@@ -273,6 +310,17 @@ class Gun(
      *  tracks a learning surfer's current dodge, arbitrated against the main DC
      *  gun by virtual-gun hit rate. */
     private fun asGunEnabled(): Boolean = System.getProperty("mirage.asgun")?.trim()?.lowercase() == "on"
+
+    /** Stop-and-go movers produce a more stable DC scale under theory MEA than a
+     *  fire-time precise MEA that changes with every braking phase. Explicit
+     *  mirage.mea and mirage.stopgomea values remain available for A/B tests. */
+    private fun theoryMeaEnabled(distance: Double): Boolean =
+        StopGoMeaPolicy.useTheory(
+            System.getProperty("mirage.stopgomea"),
+            System.getProperty("mirage.mea"),
+            stopGoDetector.likely,
+            distance,
+        )
 
     /** Precise MEA for a bullet *we* fire at the enemy: the largest bearing
      *  offset the enemy can reach from our gun before the bullet catches it.
@@ -326,8 +374,11 @@ class Gun(
         val rates = VirtualGuns.Aim.values().joinToString(",") { "${AIM_LABELS[it.ordinal]}=${"%.2f".format(vguns.hitRate(it))}" }
         val hitRate = offenseStats.hitRate()
         val hitRateText = if (hitRate.isNaN()) "n/a" else "%.3f".format(hitRate)
-        return "aim=$lastAim dc=${dcGun.size()} dcAcc=${"%.2f".format(dcGun.activeProfileRate())} " +
-            "fp=$lastProfile ohr=$hitRateText@${offenseStats.resolvedShots()} [$rates]"
+        val activeDcGun = if (lastTheoryMea) dcTheoryGun else dcGun
+        return "aim=$lastAim mea=${if (lastTheoryMea) "theory" else "precise"} " +
+            "dc=${activeDcGun.size()} dcAcc=${"%.2f".format(activeDcGun.activeProfileRate())} " +
+            "fp=$lastProfile ohr=$hitRateText@${offenseStats.resolvedShots()} [$rates] " +
+            stopGoDetector.debugSummary()
     }
 
     private fun angleForAim(
@@ -370,12 +421,15 @@ class Gun(
                     halfBotGf,
                 )
             VirtualGuns.Aim.GF_WALL -> gfWallGun.aimRadians(ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, wallSeg, halfBotGf)
-            VirtualGuns.Aim.GF_DC -> dcGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
+            VirtualGuns.Aim.GF_DC ->
+                (if (ctx.useTheoryMea) dcTheoryGun else dcGun)
+                    .aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
             VirtualGuns.Aim.GF_DC_AS ->
-                if (asGunEnabled()) {
+                if (!ctx.useTheoryMea && asGunEnabled()) {
                     dcAsGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
                 } else {
-                    dcGun.aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
+                    (if (ctx.useTheoryMea) dcTheoryGun else dcGun)
+                        .aimRadians(dcFeat, ctx.directAngleRadians, ctx.orbitSign, ctx.maxEscapeRadians, halfBotGf)
                 }
         }
 
@@ -556,6 +610,7 @@ class Gun(
         val power: Double,
         val bulletSpeed: Double,
         val maxEscapeRadians: Double,
+        val useTheoryMea: Boolean,
     )
 
     private companion object {

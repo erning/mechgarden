@@ -2,6 +2,7 @@ package zen.mirage
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotSame
 
 class DcGunRoundTest {
     @Test
@@ -24,6 +25,14 @@ class DcGunRoundTest {
         gun.beginRound()
 
         assertEquals(1, gun.size())
+    }
+
+    @Test
+    fun preciseAndTheoryRegistriesKeepSeparateModels() {
+        val precise = DcGun.forEnemy("dc-registry-isolation-test")
+        val theory = DcGun.forEnemyTheory("dc-registry-isolation-test")
+
+        assertNotSame(precise, theory)
     }
 
     private companion object {

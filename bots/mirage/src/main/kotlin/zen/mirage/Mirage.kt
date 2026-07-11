@@ -328,17 +328,30 @@ abstract class Mirage : AdvancedRobot() {
             } else {
                 null
             }
+        // Give the shield first chance at the turret, but only suppress a normal
+        // shot when a shield bullet actually left the gun. Previously the mere
+        // existence of an intercept plan held the normal gun even when the shield
+        // could not fire (gun heat or alignment), creating silent no-fire windows
+        // against stationary opponents with plenty of energy.
+        var activeShieldBullet: robocode.Bullet? = null
         val fired =
             if (activeShieldPlan != null) {
-                // Keep all normal gun models current while the shield owns the turret.
-                gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire = true)
-                activeShieldGun.execute(activeShieldPlan)
+                activeShieldBullet = activeShieldGun.execute(activeShieldPlan)
+                val normalBullet =
+                    gun.fireControl(
+                        tracker,
+                        frame,
+                        battleFieldWidth,
+                        battleFieldHeight,
+                        holdFire = holdFire || activeShieldBullet != null,
+                    )
+                activeShieldBullet ?: normalBullet
             } else {
                 gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire)
             }
         if (fired != null) {
             shadows.onFire(fired, time, waves.active)
-            if (activeShieldPlan == null) shieldDetector.onOurFire()
+            if (activeShieldBullet == null) shieldDetector.onOurFire()
             fireDetector.ourFire(fired.power)
             bulletsFired++
             bulletPowerFired += fired.power

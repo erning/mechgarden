@@ -109,7 +109,7 @@ class Gun(
         // the best (circular default). The mirage.aim=best override (A/B tuning)
         // instead defers to the virtual scores, treating DC as just another
         // candidate — useful where a segmented GF gun genuinely out-predicts DC.
-        val aim =
+        val learnedAim =
             when (System.getProperty("mirage.aim") ?: "dc") {
                 "best" -> vguns.best()
                 else ->
@@ -121,6 +121,19 @@ class Gun(
                             VirtualGuns.Aim.GF_DC_AS
                         else -> VirtualGuns.Aim.GF_DC
                     }
+            }
+        // Once the target has remained parked for several ticks, its impact
+        // bearing is the current direct bearing by geometry. A DC gun trained on
+        // the target's earlier movement can otherwise keep proposing alternating
+        // non-zero guess factors; the turret chases those changing angles without
+        // entering the fire-alignment tolerance. Head-on is stable and exact for
+        // the parked phase. The sustained-speed gate avoids momentary direction
+        // changes by normal movers.
+        val aim =
+            if (tracker.stationaryTicks >= STATIONARY_AIM_GATE) {
+                VirtualGuns.Aim.HEAD_ON
+            } else {
+                learnedAim
             }
         lastAim = aim
         val evPower = choosePower(vguns.hitRate(aim), distance)
@@ -561,6 +574,7 @@ class Gun(
         const val SURFER_LAT_GATE = 5.0
         const val FIRE_STALE_TICKS = 6L
         const val SHIELD_EDGE_OFFSET = 12.0
+        const val STATIONARY_AIM_GATE = 6L
 
         /** Precise-MEA floor shared with the surf side (Mirage.MIN_ESCAPE_RADIANS).
          *  Kept here too so the gun is self-contained if the floor is tuned. */

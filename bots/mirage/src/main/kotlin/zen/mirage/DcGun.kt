@@ -25,6 +25,7 @@ class DcGun(
     private val k: Int = dcKOverride(),
     private val bins: Int = 31,
     private val halfLifeOverride: Double? = null,
+    private val hitPenalty: Double = 0.0,
 ) {
     private data class Pending(
         val features: DoubleArray,
@@ -37,11 +38,14 @@ class DcGun(
         val maxEscapeRadians: Double,
         val halfBotWidthGf: Double,
         val profileGuessFactors: DoubleArray,
+        val bulletToken: Any?,
+        var hitGuessFactor: Double? = null,
     )
 
     private data class Obs(
         val features: DoubleArray,
-        val gf: Double,
+        val visitGuessFactor: Double?,
+        val hitGuessFactor: Double?,
     )
 
     private val pending = mutableListOf<Pending>()
@@ -53,8 +57,9 @@ class DcGun(
 
     private class Score(
         var d2: Double,
-        var gf: Double,
+        var visitGuessFactor: Double?,
         var recency: Double = 1.0,
+        var hitGuessFactor: Double? = null,
     )
 
     private val scoreBuf = Array(CAP) { Score(0.0, 0.0) }
@@ -65,13 +70,21 @@ class DcGun(
      *  carrying a pending wave across that boundary would eventually resolve it
      *  against an unrelated position in a later round and poison the DC buffer. */
     fun beginRound() {
+        for (wave in pending) {
+            val hitGuessFactor = wave.hitGuessFactor ?: continue
+            // A killing bullet produces no later scan of the dead enemy, so its
+            // wave cannot supply a center visit. Preserve the exact contact as a
+            // hit-only negative observation instead of dropping the best hit.
+            obs += Obs(wave.features, visitGuessFactor = null, hitGuessFactor = hitGuessFactor)
+        }
         pending.clear()
+        trimObservations()
     }
 
     fun features(
         distance: Double,
         lateralAbs: Double,
-        advancingAbs: Double,
+        advancingVelocity: Double,
         accel: Double,
         wallForwardRatio: Double,
         timeSinceDirectionChange: Long,
@@ -79,7 +92,7 @@ class DcGun(
         doubleArrayOf(
             distance / 1200.0,
             lateralAbs / Kinematics.MAX_VELOCITY,
-            advancingAbs / Kinematics.MAX_VELOCITY,
+            abs(advancingVelocity) / Kinematics.MAX_VELOCITY,
             accel.coerceIn(-2.0, 2.0) / 2.0,
             wallForwardRatio.coerceIn(0.0, 2.0),
             timeSinceDirectionChange.coerceIn(0L, 20L) / 20.0,
@@ -94,6 +107,7 @@ class DcGun(
         directAngleRadians: Double,
         orbitSign: Int,
         maxEscapeRadians: Double,
+        bulletToken: Any? = null,
     ) {
         val distance = (features[0] * 1200.0).coerceAtLeast(Kinematics.HALF_BOT)
         val halfBotWidthGf = atan(Kinematics.HALF_BOT / distance) / maxEscapeRadians
@@ -110,7 +124,25 @@ class DcGun(
                 maxEscapeRadians,
                 halfBotWidthGf,
                 profileGuessFactors,
+                bulletToken,
             )
+    }
+
+    /** Record the actual bullet contact GF before the pending wave resolves.
+     *  Anti-surfer density later adds the normal center-visit mass and subtracts
+     *  hit mass at this exact hull-contact position. */
+    fun recordHit(
+        bulletToken: Any,
+        hitX: Double,
+        hitY: Double,
+    ) {
+        val wave = pending.firstOrNull { it.bulletToken == bulletToken } ?: return
+        val hitAngleRadians = Angles.absoluteBearing(wave.fireX, wave.fireY, hitX, hitY)
+        wave.hitGuessFactor =
+            (
+                Angles.normalizeRelative(hitAngleRadians - wave.directAngleRadians) /
+                    wave.maxEscapeRadians * wave.orbitSign
+            ).coerceIn(-1.0, 1.0)
     }
 
     fun update(
@@ -126,10 +158,10 @@ class DcGun(
             val actual = Angles.absoluteBearing(w.fireX, w.fireY, enemyX, enemyY)
             val gf = (Angles.normalizeRelative(actual - w.directAngleRadians) / w.maxEscapeRadians * w.orbitSign).coerceIn(-1.0, 1.0)
             updateProfileScores(w.profileGuessFactors, gf, w.halfBotWidthGf)
-            obs += Obs(w.features, gf)
+            obs += Obs(w.features, gf, w.hitGuessFactor)
             iter.remove()
         }
-        if (obs.size > CAP) obs.subList(0, obs.size - CAP).clear()
+        trimObservations()
     }
 
     fun size(): Int = obs.size
@@ -177,8 +209,9 @@ class DcGun(
         for (i in 0 until n) {
             val o = obs[i]
             scoreBuf[i].d2 = distance2(o.features, features, weights)
-            scoreBuf[i].gf = o.gf
+            scoreBuf[i].visitGuessFactor = o.visitGuessFactor
             scoreBuf[i].recency = if (decayPerObs >= 1.0) 1.0 else StrictMath.pow(decayPerObs, (n - 1 - i).toDouble())
+            scoreBuf[i].hitGuessFactor = o.hitGuessFactor
         }
         val kk = minOf(k, n)
         if (kk < n) selectKth(0, n - 1, kk - 1)
@@ -313,16 +346,28 @@ class DcGun(
         histBuf.fill(0.0)
         for (j in 0 until kk) {
             val s = scoreBuf[j]
-            val w = s.recency / (s.d2 + kernel)
-            val center = gfToBin(s.gf, mid)
-            for (i in histBuf.indices) {
-                val dd = (center - i).toDouble()
-                histBuf[i] += w / (dd * dd + 1.0)
-            }
+            val baseWeight = s.recency / (s.d2 + kernel)
+            s.visitGuessFactor?.let { addDensity(it, baseWeight) }
+            s.hitGuessFactor?.let { addDensity(it, -hitPenalty * baseWeight) }
         }
         val halfWindow = (halfBotWidthGf * mid).roundToInt().coerceIn(0, mid)
         val best = peakGfBin(histBuf, mid, halfWindow)
         return (best - mid).toDouble() / mid
+    }
+
+    private fun addDensity(
+        guessFactor: Double,
+        weight: Double,
+    ) {
+        val center = gfToBin(guessFactor, mid)
+        for (i in histBuf.indices) {
+            val distance = (center - i).toDouble()
+            histBuf[i] += weight / (distance * distance + 1.0)
+        }
+    }
+
+    private fun trimObservations() {
+        if (obs.size > CAP) obs.subList(0, obs.size - CAP).clear()
     }
 
     companion object {
@@ -373,10 +418,10 @@ class DcGun(
                 WeightProfile("gigarumble-combined", doubleArrayOf(4.0, 0.68044, 0.266567, 0.575477, 0.460098, 0.497114)),
             )
 
-        /** Anti-surfer (Plan D) fast-decay variant: a second DC gun trained on
-         *  the same real-fire waves but with a much shorter recency half-life, so
-         *  it tracks a learning surfer's current dodge. Tunable via mirage.ashalflife. */
-        const val AS_DEFAULT_HALF_LIFE = 50.0
+        /** A resolved wave contributes +1 at its center visit; a real hit
+         *  independently subtracts two units at the exact contact GF, matching
+         *  the classic insight that a learning surfer avoids a hit location. */
+        const val AS_HIT_PENALTY = 2.0
 
         private val perEnemy = HashMap<String, DcGun>()
 
@@ -392,7 +437,10 @@ class DcGun(
 
         fun forEnemyAs(name: String): DcGun =
             perEnemyAs.getOrPut(name) {
-                DcGun(halfLifeOverride = System.getProperty("mirage.ashalflife")?.toDoubleOrNull() ?: AS_DEFAULT_HALF_LIFE)
+                DcGun(
+                    halfLifeOverride = System.getProperty("mirage.ashalflife")?.toDoubleOrNull() ?: DEFAULT_HALF_LIFE,
+                    hitPenalty = AS_HIT_PENALTY,
+                )
             }
     }
 }

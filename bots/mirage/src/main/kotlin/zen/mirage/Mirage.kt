@@ -321,7 +321,6 @@ abstract class Mirage : AdvancedRobot() {
         // demonstrated higher score utility, so it keeps priority over anti-ram.
         // An unvalidated trial yields as soon as ram behavior is detected.
         val movementAntiRamPlan = if (activeShieldMode) null else antiRamPlan
-        if (activeShieldMode) activeShieldUsedThisRound = true
         val activeShieldPlan =
             if (activeShieldMode) {
                 activeShieldGun.plan(time, waves.active, battleFieldWidth, battleFieldHeight)
@@ -337,6 +336,7 @@ abstract class Mirage : AdvancedRobot() {
         val fired =
             if (activeShieldPlan != null) {
                 activeShieldBullet = activeShieldGun.execute(activeShieldPlan)
+                if (activeShieldBullet != null) activeShieldUsedThisRound = true
                 val normalBullet =
                     gun.fireControl(
                         tracker,

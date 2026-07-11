@@ -24,7 +24,8 @@ import kotlin.math.sin
 class Gun(
     private val bot: AdvancedRobot,
 ) {
-    private val vguns = VirtualGuns()
+    private var antiSurferEvidence = AntiSurferEvidence()
+    private var vguns = VirtualGuns(antiSurferEvidence)
     private val gfGun = GfFireGun(9)
     private val gfRollGun = GfFireGun(9, retain = ROLLING_RETAIN)
     private val gfAccelGun = GfFireGun(9, retain = ROLLING_RETAIN)
@@ -44,6 +45,7 @@ class Gun(
     /** Last firepower profile selected (mirage.debug). */
     private var lastProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
     private var lastTheoryMea = false
+    private var antiSurferSelectedShots = 0
     private var defaultPowerProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
     private var defaultPowerFloor: Double = DC_POWER_FLOOR_BASE
 
@@ -55,6 +57,8 @@ class Gun(
     /** Swap in [name]'s per-enemy DC gun (its observation set lives in a static
      *  registry that survives the per-round rebuild). */
     fun adoptEnemy(name: String) {
+        antiSurferEvidence = AntiSurferEvidence.forEnemy(name)
+        vguns = VirtualGuns(antiSurferEvidence)
         dcGun = DcGun.forEnemy(name)
         dcTheoryGun = DcGun.forEnemyTheory(name)
         dcAsGun = DcGun.forEnemyAs(name)
@@ -131,11 +135,19 @@ class Gun(
                 "best" -> vguns.best()
                 else ->
                     when {
-                        activeDcGun.size() < DC_PRIMARY_MIN -> vguns.best()
+                        activeDcGun.size() < DC_PRIMARY_MIN -> vguns.best(includeAntiSurfer = false)
+                        !useTheoryMea && asGunForced() && dcAsGun.size() >= DC_PRIMARY_MIN ->
+                            VirtualGuns.Aim.GF_DC_AS
                         !useTheoryMea &&
                             asGunEnabled() &&
                             dcAsGun.size() >= DC_PRIMARY_MIN &&
-                            vguns.hitRate(VirtualGuns.Aim.GF_DC_AS) > vguns.hitRate(VirtualGuns.Aim.GF_DC) ->
+                            antiSurferEvidence.select(
+                                AS_MIN_VIRTUAL_ATTEMPTS,
+                                AS_MAX_MAIN_HIT_RATE,
+                                AS_MAX_MAIN_EXIT_HIT_RATE,
+                                AS_MIN_HIT_RATE_LEAD,
+                                AS_EXIT_HIT_RATE_LEAD,
+                            ) ->
                             VirtualGuns.Aim.GF_DC_AS
                         else -> VirtualGuns.Aim.GF_DC
                     }
@@ -188,7 +200,7 @@ class Gun(
             activeDcGun.features(
                 distance,
                 abs(lateralSpeed),
-                abs(advancingSpeed),
+                advancingSpeed,
                 accel,
                 (tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (distance / bulletSpeed).coerceAtLeast(1.0),
                 tracker.timeSinceDirectionChange(),
@@ -237,12 +249,19 @@ class Gun(
                     } else {
                         preciseEscapeRadians
                     }
+                val virtualAngles =
+                    anglesForVguns(aim, rawSelected, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight)
                 vguns.onFire(
                     ctx.sourceX,
                     ctx.sourceY,
                     bot.time,
                     ctx.bulletSpeed,
-                    anglesForVguns(aim, rawSelected, ctx, dcFeat, distLatSeg, accelSeg, wallSeg, halfBotGf, fieldWidth, fieldHeight),
+                    virtualAngles,
+                    asEvidenceEligible =
+                        !useTheoryMea &&
+                            asGunEnabled() &&
+                            dcGun.size() >= DC_PRIMARY_MIN &&
+                            dcAsGun.size() >= DC_PRIMARY_MIN,
                 )
                 trainFiredGuns(ctx, distLatSeg, accelSeg, wallSeg)
                 dcGun.onFire(
@@ -275,10 +294,12 @@ class Gun(
                         ctx.directAngleRadians,
                         ctx.orbitSign,
                         preciseTrainingEscapeRadians,
+                        bullet,
                     )
                 }
                 firePowerSelector.onFire(powerProfile, bullet)
                 shieldAimSelector.onFire(shieldAimProfile, bullet)
+                if (aim == VirtualGuns.Aim.GF_DC_AS) antiSurferSelectedShots++
                 return bullet
             }
         }
@@ -306,10 +327,13 @@ class Gun(
         System.getProperty("mirage.powerfloor")?.toDoubleOrNull()?.coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
             ?: defaultPowerFloor
 
-    /** Plan D (mirage.asgun): a second DC gun with a short recency half-life that
-     *  tracks a learning surfer's current dodge, arbitrated against the main DC
-     *  gun by virtual-gun hit rate. */
-    private fun asGunEnabled(): Boolean = System.getProperty("mirage.asgun")?.trim()?.lowercase() == "on"
+    /** True anti-surfer DC view: resolved firing waves add mass, while a real hit
+     *  subtracts twice that mass because a learning surfer will avoid the GF it
+     *  just learned was dangerous. `force` bypasses virtual-gun arbitration for
+     *  an A/B probe; unset or `on` keeps the measured selector. */
+    private fun asGunEnabled(): Boolean = System.getProperty("mirage.asgun")?.trim()?.lowercase() != "off"
+
+    private fun asGunForced(): Boolean = System.getProperty("mirage.asgun")?.trim()?.lowercase() == "force"
 
     /** Stop-and-go movers produce a more stable DC scale under theory MEA than a
      *  fire-time precise MEA that changes with every braking phase. Explicit
@@ -350,6 +374,7 @@ class Gun(
     }
 
     fun recordBulletHit(bullet: robocode.Bullet) {
+        if (asGunEnabled()) dcAsGun.recordHit(bullet, bullet.x, bullet.y)
         offenseStats.recordHit()
         firePowerSelector.recordHit(bullet)
         shieldAimSelector.recordHit(bullet)
@@ -377,6 +402,9 @@ class Gun(
         val activeDcGun = if (lastTheoryMea) dcTheoryGun else dcGun
         return "aim=$lastAim mea=${if (lastTheoryMea) "theory" else "precise"} " +
             "dc=${activeDcGun.size()} dcAcc=${"%.2f".format(activeDcGun.activeProfileRate())} " +
+            "as=${"%.2f".format(antiSurferEvidence.mainHitRate())}/${"%.2f".format(antiSurferEvidence.antiSurferHitRate())}" +
+            "@${"%.1f".format(antiSurferEvidence.resolvedAttempts())}/${if (antiSurferEvidence.selected()) "on" else "off"}" +
+            "/sel:$antiSurferSelectedShots " +
             "fp=$lastProfile ohr=$hitRateText@${offenseStats.resolvedShots()} [$rates] " +
             stopGoDetector.debugSummary()
     }
@@ -618,6 +646,11 @@ class Gun(
         const val ENERGY_DIVISOR = 4.0
         const val MAX_ITERATIONS = 8
         const val DC_PRIMARY_MIN = 45
+        const val AS_MIN_VIRTUAL_ATTEMPTS = 100.0
+        const val AS_MAX_MAIN_HIT_RATE = 0.20
+        const val AS_MAX_MAIN_EXIT_HIT_RATE = 0.22
+        const val AS_MIN_HIT_RATE_LEAD = 0.03
+        const val AS_EXIT_HIT_RATE_LEAD = 0.005
 
         const val DC_POWER_FLOOR_BASE = 1.2
         const val ENERGY_LEAD_THRESHOLD = 20.0

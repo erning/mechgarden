@@ -42,6 +42,29 @@ class ActiveShieldPolicyTest {
     }
 
     @Test
+    fun abandonsALatchedShieldAfterSustainedUnderperformance() {
+        val policy = ActiveShieldPolicy()
+
+        repeat(3) {
+            policy.beginRound()
+            policy.recordRound(dealt = 20.0, taken = 70.0, survived = false, usedActiveShield = false)
+        }
+        repeat(2) {
+            policy.beginRound()
+            policy.recordRound(dealt = 40.0, taken = 45.0, survived = true, usedActiveShield = true)
+        }
+        repeat(3) {
+            policy.beginRound()
+            assertTrue(policy.activeForRound())
+            policy.recordRound(dealt = 0.0, taken = 100.0, survived = false, usedActiveShield = true)
+        }
+        policy.beginRound()
+
+        assertFalse(policy.activeForRound())
+        assertFalse(policy.latchedForRound())
+    }
+
+    @Test
     fun doesNotLatchWhenShieldTrialsUnderperformNormalPlay() {
         val policy = ActiveShieldPolicy()
 
@@ -55,6 +78,72 @@ class ActiveShieldPolicyTest {
         policy.beginRound()
 
         assertFalse(policy.activeForRound())
+    }
+
+    @Test
+    fun doesNotRescheduleAfterTwoUnderperformingTrials() {
+        val policy = ActiveShieldPolicy()
+
+        repeat(3) {
+            policy.beginRound()
+            policy.recordRound(dealt = 20.0, taken = 70.0, survived = false, usedActiveShield = false)
+        }
+        repeat(2) {
+            policy.beginRound()
+            policy.recordRound(dealt = 5.0, taken = 70.0, survived = false, usedActiveShield = true)
+            policy.beginRound()
+            policy.recordRound(dealt = 20.0, taken = 70.0, survived = false, usedActiveShield = false)
+        }
+
+        repeat(5) {
+            policy.beginRound()
+            assertFalse(policy.activeForRound())
+            policy.recordRound(dealt = 0.0, taken = 80.0, survived = false, usedActiveShield = false)
+        }
+    }
+
+    @Test
+    fun rejectedTrialsCannotLatchAfterNormalAverageFalls() {
+        val policy = ActiveShieldPolicy()
+
+        repeat(3) {
+            policy.beginRound()
+            policy.recordRound(dealt = 20.0, taken = 70.0, survived = false, usedActiveShield = false)
+        }
+        repeat(2) {
+            policy.beginRound()
+            policy.recordRound(dealt = 0.0, taken = 80.0, survived = false, usedActiveShield = true)
+        }
+        repeat(20) {
+            policy.beginRound()
+            policy.recordRound(dealt = 0.0, taken = 100.0, survived = false, usedActiveShield = false)
+        }
+        policy.beginRound()
+
+        assertFalse(policy.activeForRound())
+        assertFalse(policy.latchedForRound())
+    }
+
+    @Test
+    fun stopsRetryingWhenTrialsNeverFireAShieldBullet() {
+        val policy = ActiveShieldPolicy()
+
+        repeat(3) {
+            policy.beginRound()
+            policy.recordRound(dealt = 20.0, taken = 70.0, survived = false, usedActiveShield = false)
+        }
+        repeat(4) {
+            policy.beginRound()
+            assertTrue(policy.activeForRound())
+            policy.recordRound(dealt = 0.0, taken = 80.0, survived = false, usedActiveShield = false)
+            policy.beginRound()
+            assertFalse(policy.activeForRound())
+            policy.recordRound(dealt = 0.0, taken = 80.0, survived = false, usedActiveShield = false)
+        }
+        policy.beginRound()
+
+        assertFalse(policy.activeForRound())
+        assertFalse(policy.latchedForRound())
     }
 
     @Test

@@ -122,15 +122,15 @@ class Gun(
                         else -> VirtualGuns.Aim.GF_DC
                     }
             }
-        // Once the target has remained parked for several ticks, its impact
-        // bearing is the current direct bearing by geometry. A DC gun trained on
-        // the target's earlier movement can otherwise keep proposing alternating
-        // non-zero guess factors; the turret chases those changing angles without
-        // entering the fire-alignment tolerance. Head-on is stable and exact for
-        // the parked phase. The sustained-speed gate avoids momentary direction
-        // changes by normal movers.
+        // Once the target has remained parked or only crept for several ticks,
+        // its displacement during bullet flight is small enough that head-on is
+        // the stable choice. A DC gun trained on earlier movement can otherwise
+        // keep proposing alternating non-zero guess factors; the turret chases
+        // those changing angles without entering the fire-alignment tolerance.
+        // The sustained slow-speed gate avoids momentary direction changes by
+        // normal movers while covering shield-style micro-movement.
         val aim =
-            if (tracker.stationaryTicks >= STATIONARY_AIM_GATE) {
+            if (tracker.slowTicks >= SLOW_AIM_GATE) {
                 VirtualGuns.Aim.HEAD_ON
             } else {
                 learnedAim
@@ -574,7 +574,7 @@ class Gun(
         const val SURFER_LAT_GATE = 5.0
         const val FIRE_STALE_TICKS = 6L
         const val SHIELD_EDGE_OFFSET = 12.0
-        const val STATIONARY_AIM_GATE = 6L
+        const val SLOW_AIM_GATE = 6L
 
         /** Precise-MEA floor shared with the surf side (Mirage.MIN_ESCAPE_RADIANS).
          *  Kept here too so the gun is self-contained if the floor is tuned. */

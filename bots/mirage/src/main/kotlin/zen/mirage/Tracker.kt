@@ -46,6 +46,12 @@ class Tracker(
     var stationaryTicks = 0L
         private set
 
+    /** Ticks the enemy has moved no faster than a slow crawl. This is a gun-only
+     *  stability signal: some shield-style opponents move at about 0.7 px/tick,
+     *  which looks parked but does not satisfy the stricter shielding detector. */
+    var slowTicks = 0L
+        private set
+
     /** Ticks since the enemy fired a low-power bullet — shielders fire cheap 0.1
      *  bullets to intercept ours. Recent low-power fire + stationary => likely
      *  shielding. */
@@ -115,6 +121,7 @@ class Tracker(
         forwardWallSpace = distanceToWall(enemy.x, enemy.y, travelHeading, fieldWidth, fieldHeight)
 
         stationaryTicks = if (Math.abs(enemy.velocity) <= SHIELD_STATIONARY_SPEED) stationaryTicks + step else 0L
+        slowTicks = if (Math.abs(enemy.velocity) <= GUN_SLOW_SPEED) slowTicks + step else 0L
         ticksSinceLowPowerFire = (ticksSinceLowPowerFire + step).coerceAtMost(LOW_POWER_RECENT_TICKS + 1L)
 
         val frame = Frame(self, enemy, derived)
@@ -138,6 +145,7 @@ class Tracker(
 
         // Bullet-shield detection thresholds shared with the established tracker pattern.
         const val SHIELD_STATIONARY_SPEED = 0.2
+        const val GUN_SLOW_SPEED = 1.0
         const val SHIELD_STATIONARY_TICKS = 8L
         const val LOW_POWER_FIRE_MAX = 0.35
         const val LOW_POWER_RECENT_TICKS = 30L

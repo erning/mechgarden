@@ -70,6 +70,7 @@ JDK_JAVA_OPTIONS="-Dmirage.debug=true" python3 scripts/duel.py -r mirage -e roni
 | `mirage.asgun` | `on` \| `off` \| `force` | hit-aware anti-surfer DC：缺省或 `on` 按置信度门槛自动切换；`off` 禁用并行训练；`force` 在 DC 就绪后强制使用，仅供 A/B。 | `on`（门控） |
 | `mirage.antiram` | `on` \| `off` | 是否按接近速度、航向、横向速度和碰撞证据识别追撞者，并在 latch 生效时切换近距离高火力。 | `on` |
 | `mirage.ramescape` | `on` \| `off` | 只控制 Phase 8 的 anti-ram 逃逸移动；`off` 保留近距离火力响应。 | `on` |
+| `mirage.rampressure` | `sustained` \| `latch` | `sustained` 对高置信度追撞者保持整回合及跨回合进攻火力；`latch` 恢复只在探测器 latch 生效时使用进攻火力的旧行为。 | `sustained` |
 | `mirage.activeshield` | `force` \| `off` | `force`=每回合强制主动弹盾；`off`=禁用。缺省由跨回合 A/B 选择器决定。 | `adaptive` |
 | `mirage.shotdodger` | `on` \| `off` \| `force` | 控制简单枪专家选择；`force` 跳过置信度门槛，仅供诊断。 | `on` |
 | `mirage.shotweight` | `0`–∞ | 最佳简单枪专家叠加到 surf danger 的归一化峰值权重。 | `0.55` |
@@ -872,8 +873,46 @@ policy 的 `ECONOMY`，而是增加无名称、跨回合的 `ScorePressureContro
 `taken/r` 从 42.5 降到 39.8。部分参考机器人使用自建随机数，因此不把单轮 +1.28
 解释为确定收益，但可以确认没有出现全局 `auto` 的保护组回退。
 
+### Phase 13 · 高生存、低 APS 追撞者的持续火力
+
+Mirage 0.9.5 的 RoboRumble 数据中，NanoDeath、Impact、RammingC、SuperRamFire、xbots、
+RamRod、Mjolnir 和 WaveRammer 的 Survival 比 APS 高 21～27 个百分点，并且 KNNPBI
+均为负。它们写入 `mirage-high-survival-low-aps`，统一使用 35 回合和固定 seed 验收。
+
+调试确认 Mirage 对 NanoDeath 的真实命中率长期超过 90%，平均弹力约为 2.2～2.9，
+问题不是瞄准或开火门控。对手多数使用 3.0 弹力持续贴身换血；原来的进攻火力只在
+`RamThreatDetector` 的 40 tick latch 生效时启用，追撞者越过 Mirage 后会短暂退出
+latch，使火力在同一回合内反复退回保守 profile。
+
+先验证并拒绝了两个移动方向：把直接逃逸提前到 180 px / 24 tick 时，目录 APS 从
+74.17 降到 73.68；改为 150 px / 18 tick 后降到 73.03。逃逸偏角从 35° 改为 60°
+或 20°，APS 又分别降到 71.73 和 70.94。现有 anti-ram 几何保持不变。
+
+最终增加按对手保存的 `RamThreatPolicy`：
+
+- 普通追撞信号仍沿用原来的 40 tick latch，不扩大策略作用面；
+- 只有置信度达到 0.75（约 15 tick 连续证据）或发生实际碰撞，才确认持续追撞；
+- 确认后，本回合剩余时间持续使用 `AGGRESSIVE`，后续回合从第一发开始沿用；
+- 连续 3 个回合没有高置信度证据后遗忘，避免瞬时追击永久污染策略；
+- `mirage.rampressure=latch` 恢复旧行为，供 A/B 使用。
+
+目标目录三组 35 回合 A/B：
+
+| Seed | 旧 latch APS / Survival | 持续火力 APS / Survival | ΔAPS |
+|---:|---:|---:|---:|
+| 9501 | 74.17 / 97.50% | 76.15 / 97.86% | +1.98 |
+| 9502 | 74.27 / 97.14% | 76.21 / 98.21% | +1.94 |
+| 9503 | 74.19 / 97.86% | 75.72 / 97.50% | +1.53 |
+| **均值** | **74.21 / 97.50%** | **76.03 / 97.86%** | **+1.82** |
+
+第一版只需 6 tick 证据就整回合并跨回合保持火力，虽然目标组平均提升 1.70 APS，
+但 `gigarumble` 强敌组从 43.63 回退到 42.61 APS，说明会把正常的短暂切入误判为
+追撞。提高到 0.75 置信度后，相同 seed 的 29 个强敌从旧策略的 43.63 APS /
+47.09% Survival 提高到 44.20 / 47.64%，`taken/r` 从 45.9 降到 45.0。最终门槛既保留
+了目标收益，也消除了宽松识别造成的强敌回归。
+
 ## 参考
 
-- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,Targeting,OrbitDirection,StopGoDetector,StopGoMeaPolicy,PreciseMea,MovementProfileSelector,FirePowerSelector,ScorePressureController,ActiveShieldGun,ActiveShieldPolicy,RamThreatDetector,AntiRamPlanner,ShotDodger,SimulatedTargeting,Surfer}.kt`
+- `bots/mirage/src/main/kotlin/zen/mirage/{Mirage,Gun,DcGun,Targeting,OrbitDirection,StopGoDetector,StopGoMeaPolicy,PreciseMea,MovementProfileSelector,FirePowerSelector,ScorePressureController,ActiveShieldGun,ActiveShieldPolicy,RamThreatDetector,RamThreatPolicy,AntiRamPlanner,ShotDodger,SimulatedTargeting,Surfer}.kt`
   ——诊断与 override 的实现。
 - [RoboRumble / LiteRumble 评分指标说明](../../../docs/rumble-metrics.md) —— APS / PWIN / Survival 定义。

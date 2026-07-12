@@ -96,12 +96,15 @@ abstract class Mirage : AdvancedRobot() {
     private val engagementStats = EngagementStats()
     private val ramThreatDetector = RamThreatDetector()
     private val antiRamPlanner = AntiRamPlanner()
+    private var ramThreatPolicy = RamThreatPolicy()
     private val activeShieldGun = ActiveShieldGun(this)
     private var bulletsFired = 0
     private var bulletsHit = 0
     private var bulletPowerFired = 0.0
     private var activeShieldUsedThisRound = false
     private var ramThreatSeenThisRound = false
+    private var ramPressureConfirmedThisRound = false
+    private var knownRamThreatThisRound = false
 
     /** GF histogram of where enemy bullets hit us (mirage.debug), in 11 bins
      *  from GF -1 to +1. Reveals whether a gun has locked onto a movement
@@ -265,6 +268,7 @@ abstract class Mirage : AdvancedRobot() {
         ramThreatDetector.observe(frame)
         val ramThreat = ramThreatDetector.snapshot()
         if (ramThreat.active) ramThreatSeenThisRound = true
+        if (ramThreat.confidence >= SUSTAINED_RAM_CONFIDENCE) ramPressureConfirmedThisRound = true
         val antiRamPlan =
             if (ramEscapeEnabled()) {
                 antiRamPlanner.plan(frame, ramThreat, battleFieldWidth, battleFieldHeight)
@@ -299,7 +303,13 @@ abstract class Mirage : AdvancedRobot() {
         // against strong guns (validated: BALANCED-everywhere costs ~8 survival).
         val harvestTier = harvest.tier(threatStats.enemyHitRate(), threatStats.wavesObserved())
         if (energy < SCORE_POWER_MIN_ENERGY) scorePowerEnergyBackoff = true
-        val antiRamFireActive = antiRamEnabled() && ramThreatDetector.active()
+        // Once direct pursuit is confirmed, keep pressure fire for the remainder
+        // of the round instead of dropping back whenever the detector's short
+        // latch expires after an overshoot. Per-enemy memory also avoids spending
+        // the opening shots of every later round in a conservative profile.
+        val sustainedRamPressure =
+            sustainedRamPressureEnabled() && (knownRamThreatThisRound || ramPressureConfirmedThisRound)
+        val antiRamFireActive = antiRamEnabled() && (sustainedRamPressure || ramThreatDetector.active())
         val adaptivePower = scorePowerThisRound && !scorePowerEnergyBackoff && !antiRamFireActive
         val powerPlan =
             Gun.PowerPlan.forSituation(
@@ -458,6 +468,7 @@ abstract class Mirage : AdvancedRobot() {
         ramThreatDetector.recordCollision()
         antiRamPlanner.recordCollision()
         ramThreatSeenThisRound = true
+        ramPressureConfirmedThisRound = true
     }
 
     override fun onBulletMissed(event: BulletMissedEvent) {
@@ -477,6 +488,7 @@ abstract class Mirage : AdvancedRobot() {
     }
 
     override fun onRoundEnded(event: RoundEndedEvent) {
+        ramThreatPolicy.recordRound(ramPressureConfirmedThisRound)
         activeShieldGun.recordRound(
             dealtThisRound,
             damageThisRound,
@@ -524,11 +536,15 @@ abstract class Mirage : AdvancedRobot() {
         bulletPowerFired = 0.0
         activeShieldUsedThisRound = false
         ramThreatSeenThisRound = false
+        ramPressureConfirmedThisRound = false
+        knownRamThreatThisRound = ramThreatPolicy.aggressiveFireRecommended()
         engagementStats.reset()
         for (i in hitGfBins.indices) hitGfBins[i] = 0
     }
 
     private fun adoptEnemy(name: String) {
+        ramThreatPolicy = RamThreatPolicy.forEnemy(name)
+        knownRamThreatThisRound = ramThreatPolicy.aggressiveFireRecommended()
         survivalPolicySelector = SurvivalPolicySelector.forEnemy(name)
         survivalPolicy = survivalPolicySelector.policyForRound()
         surfer.adoptEnemy(name)
@@ -695,6 +711,10 @@ abstract class Mirage : AdvancedRobot() {
             else -> true
         }
 
+    /** A/B override: `mirage.rampressure=latch` restores the former behavior,
+     *  where aggressive fire lasted only as long as the detector's active latch. */
+    private fun sustainedRamPressureEnabled(): Boolean = System.getProperty("mirage.rampressure")?.trim()?.lowercase() != "latch"
+
     /** A/B override for the movement half of anti-ram. `mirage.antiram=off`
      *  remains the master switch and also disables the established close-range
      *  firepower response; `mirage.ramescape=off` leaves that gun behavior intact
@@ -731,6 +751,7 @@ abstract class Mirage : AdvancedRobot() {
         const val HARVEST_POWER_FLOOR = 1.2
         const val LOW_POWER_PROFILE_TICKS = 30L
         const val SCORE_POWER_MIN_ENERGY = 30.0
+        const val SUSTAINED_RAM_CONFIDENCE = 0.75
         const val SHIELD_STATIONARY_PROFILE_TICKS = 12L
         const val MAX_VIRTUAL_PREDICTION_TICKS = 8L
 

@@ -277,6 +277,21 @@
       "suzushin7.nano.Galaxy03_1.01.jar",
       "jcs.AutoBot_4.2.1.jar"
     ],
+    // High-survival, low-APS pairings for Mirage 0.9.5, selected from the
+    // 2026-07-12 RoboRumble table. Each has Survival - APS above 21 points and
+    // negative KNNPBI; entries with more battles or a larger KNNPBI deficit are
+    // preferred over noisier two-battle outliers.
+    // Source: https://rumble.robowiki.net/BotDetails?game=roborumble&name=zen.Mirage%200.9.5&order=-KNNPBI
+    "mirage-high-survival-low-aps": [
+      "radnor.RamRod_1.0.jar",
+      "supersample.SuperRamFire_1.0.jar",
+      "as.xbots_1.0.jar",
+      "mz.NanoDeath_2.56.jar",
+      "mn.nano.perceptual.Impact_1.3.0.jar",
+      "suh.nano.RammingC_1.00.jar",
+      "bvh.mini.Mjolnir_0.3.jar",
+      "wiki.WaveRammer_1.0.jar"
+    ],
     // The 25 lowest-KNNPBI pairings for Mirage 0.9.4, captured on 2026-07-12 at 01:21:34 UTC.
     // Source: https://rumble.robowiki.net/BotDetails?game=roborumble&name=zen.Mirage%200.9.4&order=-KNNPBI
     // Entries are ordered from the most negative KNNPBI upward.

@@ -15,14 +15,16 @@ val robotProperties =
 val robotJarFileName =
     "${robotProperties.getProperty("robot.classname")} ${robotProperties.getProperty("robot.version")}"
         .replace(' ', '_') + ".jar"
+val robotJarPattern = "${robotProperties.getProperty("robot.classname")}_*.jar"
 val legacyJarFileName = "${project.name}.jar"
-val deleteLegacyBuiltJar by tasks.registering(Delete::class) {
-    delete(layout.buildDirectory.file("libs/$legacyJarFileName"))
+val deleteOldBuiltJars by tasks.registering(Delete::class) {
+    delete(
+        fileTree(layout.buildDirectory.dir("libs")) {
+            include(robotJarPattern, legacyJarFileName)
+            exclude(robotJarFileName)
+        },
+    )
 }
-val deleteLegacyDeployedJar by tasks.registering(Delete::class) {
-    delete(robotsDir.resolve(legacyJarFileName))
-}
-
 dependencies {
     compileOnly(files(robocodeJar))
     testImplementation(kotlin("test"))
@@ -31,24 +33,36 @@ dependencies {
 }
 
 tasks.named<Jar>("jar") {
-    dependsOn(deleteLegacyBuiltJar)
+    dependsOn(deleteOldBuiltJars)
     archiveFileName.set(robotJarFileName)
 }
 
 val deploy by tasks.registering(Copy::class) {
     group = "robocode"
     description = "Build Mirage as a jar and deploy it into robocode/robots."
-    dependsOn(deleteLegacyDeployedJar)
     from(tasks.named("jar"))
     into(robotsDir)
+    doFirst {
+        // Keep the last deployed robot intact when compilation or packaging fails.
+        delete(
+            fileTree(robotsDir) {
+                include(robotJarPattern, legacyJarFileName)
+            },
+            robotsDir.resolve("robot.database"),
+        )
+    }
     doLast {
-        delete(robotsDir.resolve("robot.database"))
         logger.lifecycle("Deployed $robotJarFileName to $robotsDir")
     }
 }
 
 tasks.register<Delete>("undeploy") {
     group = "robocode"
-    description = "Remove Mirage's jar from robocode/robots."
-    delete(robotsDir.resolve(robotJarFileName), robotsDir.resolve(legacyJarFileName))
+    description = "Remove all deployed Mirage jars from robocode/robots."
+    delete(
+        fileTree(robotsDir) {
+            include(robotJarPattern, legacyJarFileName)
+        },
+        robotsDir.resolve("robot.database"),
+    )
 }

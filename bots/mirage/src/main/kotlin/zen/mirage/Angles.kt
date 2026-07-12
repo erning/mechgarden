@@ -17,6 +17,11 @@ object Angles {
 
     /** Normalize an angle to (-PI, PI] radians. */
     fun normalizeRelative(angle: Double): Double {
+        // Simulation loops usually move by less than one revolution per tick;
+        // keep their common path off the floating-point remainder instruction.
+        if (angle > -PI && angle <= PI) return angle
+        if (angle > PI && angle <= PI + TWO_PI) return angle - TWO_PI
+        if (angle <= -PI && angle > -PI - TWO_PI) return angle + TWO_PI
         var a = angle % TWO_PI
         if (a <= -PI) a += TWO_PI
         if (a > PI) a -= TWO_PI
@@ -25,6 +30,10 @@ object Angles {
 
     /** Normalize an angle to [0, 2*PI) radians. */
     fun normalizeAbsolute(angle: Double): Double {
+        // Headings normally need at most one wrap; retain modulo for arbitrary input.
+        if (angle >= 0.0 && angle < TWO_PI) return angle
+        if (angle >= TWO_PI && angle < 2.0 * TWO_PI) return angle - TWO_PI
+        if (angle < 0.0 && angle > -TWO_PI) return angle + TWO_PI
         var a = angle % TWO_PI
         if (a < 0.0) a += TWO_PI
         return a

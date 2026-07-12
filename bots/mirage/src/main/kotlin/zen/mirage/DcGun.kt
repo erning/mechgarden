@@ -2,7 +2,6 @@ package zen.mirage
 
 import kotlin.math.abs
 import kotlin.math.atan
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
@@ -64,6 +63,11 @@ class DcGun(
 
     private val scoreBuf = Array(CAP) { Score(0.0, 0.0) }
     private val histBuf = DoubleArray(bins)
+    private val recencyDecay =
+        (halfLifeOverride ?: recencyHalfLife()).let { halfLife ->
+            if (halfLife > 0.0) StrictMath.pow(0.5, 1.0 / halfLife) else 1.0
+        }
+    private val kernelSmoothing = kernelSmooth()
 
     /** Drop unresolved waves from the completed round while preserving learned
      *  observations and profile scores. Robocode resets time to zero every round;
@@ -153,8 +157,10 @@ class DcGun(
         val iter = pending.iterator()
         while (iter.hasNext()) {
             val w = iter.next()
-            val d = hypot(enemyX - w.fireX, enemyY - w.fireY)
-            if (w.bulletSpeed * (now - w.fireTime) < d) continue
+            val dx = enemyX - w.fireX
+            val dy = enemyY - w.fireY
+            val traveled = w.bulletSpeed * (now - w.fireTime)
+            if (traveled < 0.0 || traveled * traveled < dx * dx + dy * dy) continue
             val actual = Angles.absoluteBearing(w.fireX, w.fireY, enemyX, enemyY)
             val gf = (Angles.normalizeRelative(actual - w.directAngleRadians) / w.maxEscapeRadians * w.orbitSign).coerceIn(-1.0, 1.0)
             updateProfileScores(w.profileGuessFactors, gf, w.halfBotWidthGf)
@@ -204,14 +210,18 @@ class DcGun(
         // estimate. Half-life is in observations; <= 0 disables (uniform weight),
         // which is the A/B baseline. Carried on the Score so it survives the
         // quickselect reordering. (BeepBoop-style time-decay over a KNN buffer.)
-        val halfLife = halfLifeOverride ?: recencyHalfLife()
-        val decayPerObs = if (halfLife > 0.0) StrictMath.pow(0.5, 1.0 / halfLife) else 1.0
-        for (i in 0 until n) {
+        // Newest-first traversal advances age with one multiply per observation;
+        // computing pow(decay, age) in this loop used to dominate KNN runtime.
+        var recency = 1.0
+        var i = n - 1
+        while (i >= 0) {
             val o = obs[i]
             scoreBuf[i].d2 = distance2(o.features, features, weights)
             scoreBuf[i].visitGuessFactor = o.visitGuessFactor
-            scoreBuf[i].recency = if (decayPerObs >= 1.0) 1.0 else StrictMath.pow(decayPerObs, (n - 1 - i).toDouble())
+            scoreBuf[i].recency = recency
             scoreBuf[i].hitGuessFactor = o.hitGuessFactor
+            recency *= recencyDecay
+            i--
         }
         val kk = minOf(k, n)
         if (kk < n) selectKth(0, n - 1, kk - 1)
@@ -342,11 +352,10 @@ class DcGun(
         kk: Int,
         halfBotWidthGf: Double,
     ): Double {
-        val kernel = kernelSmooth()
         histBuf.fill(0.0)
         for (j in 0 until kk) {
             val s = scoreBuf[j]
-            val baseWeight = s.recency / (s.d2 + kernel)
+            val baseWeight = s.recency / (s.d2 + kernelSmoothing)
             s.visitGuessFactor?.let { addDensity(it, baseWeight) }
             s.hitGuessFactor?.let { addDensity(it, -hitPenalty * baseWeight) }
         }

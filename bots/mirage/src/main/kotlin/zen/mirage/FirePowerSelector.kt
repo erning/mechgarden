@@ -71,6 +71,8 @@ class FirePowerSelector {
         //  - <NAME>: force that profile (e.g. economy, aggressive) for A/B tuning.
         //  - auto: force explore/exploit adaptation for A/B tuning.
         //  - absent: adapt only when the caller's cross-round safety gate allows it.
+        // Unknown values fail fast so a misspelled A/B run cannot silently produce
+        // measurements for a different profile.
         // Non-adaptive shots are deliberately excluded from the reward model, so
         // cold-start ECONOMY rounds cannot bias a later score-pressure trial.
         val key = System.getProperty("mirage.power")?.trim()?.lowercase()
@@ -78,11 +80,13 @@ class FirePowerSelector {
             "auto" -> adaptiveSelection()
             null -> if (adaptiveEnabled) adaptiveSelection() else Selection(defaultProfile, adaptive = false)
             "policy" -> Selection(defaultProfile, adaptive = false)
-            else ->
-                Selection(
-                    Profile.values().firstOrNull { it.name.equals(key, ignoreCase = true) } ?: Profile.BALANCED,
-                    adaptive = false,
-                )
+            else -> {
+                val profile =
+                    requireNotNull(PROFILES.firstOrNull { it.name.equals(key, ignoreCase = true) }) {
+                        "Unknown mirage.power profile: $key"
+                    }
+                Selection(profile, adaptive = false)
+            }
         }
     }
 

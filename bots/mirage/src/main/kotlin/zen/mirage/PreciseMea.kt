@@ -91,10 +91,10 @@ object PreciseMea {
         var velocity = target.velocity
         var bestOffset = 0.0
         var ticks = 0
+        var centerToUs = directAngle
         while (ticks < MAX_TICKS) {
             // Drive perpendicular to source→us (pure orbit, no distancing tilt — the
             // goal is to maximize the bearing offset, not hold a range), wall-smoothed.
-            val centerToUs = Angles.absoluteBearing(sourceX, sourceY, x, y)
             val desired =
                 WallSmoothing.smoothedHeadingRadians(
                     x,
@@ -118,7 +118,8 @@ object PreciseMea {
             ticks++
             val reach = bulletSpeed * (now + ticks - fireTime)
             if (reach * reach >= (x - sourceX) * (x - sourceX) + (y - sourceY) * (y - sourceY)) break
-            val offset = Angles.normalizeRelative(Angles.absoluteBearing(sourceX, sourceY, x, y) - directAngle)
+            centerToUs = Angles.absoluteBearing(sourceX, sourceY, x, y)
+            val offset = Angles.normalizeRelative(centerToUs - directAngle)
             if (abs(offset) > abs(bestOffset)) bestOffset = offset
         }
         return bestOffset

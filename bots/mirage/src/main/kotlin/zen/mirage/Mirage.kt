@@ -298,29 +298,18 @@ abstract class Mirage : AdvancedRobot() {
         // faster. ECONOMY otherwise — dropping the cap broadly self-disables us
         // against strong guns (validated: BALANCED-everywhere costs ~8 survival).
         val harvestTier = harvest.tier(threatStats.enemyHitRate(), threatStats.wavesObserved())
-        // Reset to the round policy before applying per-scan tactical overrides.
-        // Otherwise one expired ram-threat latch would leave AGGRESSIVE selected
-        // for the rest of the round.
-        gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
-        gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
         if (energy < SCORE_POWER_MIN_ENERGY) scorePowerEnergyBackoff = true
-        gun.setAdaptivePower(
-            scorePowerThisRound &&
-                !scorePowerEnergyBackoff &&
-                !(antiRamEnabled() && ramThreatDetector.active()),
-        )
-        if (antiRamEnabled() && ramThreatDetector.active()) {
-            gun.setDefaultPowerProfile(FirePowerSelector.Profile.AGGRESSIVE)
-            gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
-        } else if (harvestPowerEnabled()) {
-            if (harvestTier == HarvestController.Tier.LOW) {
-                gun.setDefaultPowerProfile(FirePowerSelector.Profile.BALANCED)
-                gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
-            } else {
-                gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
-                gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
-            }
-        }
+        val antiRamFireActive = antiRamEnabled() && ramThreatDetector.active()
+        val adaptivePower = scorePowerThisRound && !scorePowerEnergyBackoff && !antiRamFireActive
+        val powerPlan =
+            Gun.PowerPlan.forSituation(
+                policyProfile = survivalPolicy.powerProfile,
+                policyFloor = survivalPolicy.powerFloor,
+                adaptivePower = adaptivePower,
+                antiRamFireActive = antiRamFireActive,
+                lowThreatHarvestActive = harvestPowerEnabled() && harvestTier == HarvestController.Tier.LOW,
+                tacticalFloor = HARVEST_POWER_FLOOR,
+            )
 
         // Gun: adaptive lead + fire gate. A real bullet casts shadows on waves in flight.
         // Hold fire against a bullet-shielding opponent to stop burning our own
@@ -355,11 +344,12 @@ abstract class Mirage : AdvancedRobot() {
                         frame,
                         battleFieldWidth,
                         battleFieldHeight,
+                        powerPlan,
                         holdFire = holdFire || activeShieldBullet != null,
                     )
                 activeShieldBullet ?: normalBullet
             } else {
-                gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, holdFire)
+                gun.fireControl(tracker, frame, battleFieldWidth, battleFieldHeight, powerPlan, holdFire)
             }
         if (fired != null) {
             shadows.onFire(fired, time, waves.active)
@@ -547,8 +537,6 @@ abstract class Mirage : AdvancedRobot() {
         movementProfile = selectedMovementProfile()
         gun.adoptEnemy(name)
         activeShieldGun.adoptEnemy(name)
-        gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
-        gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
         threatStats = ThreatStats.forEnemy(name)
         harvest = HarvestController.forEnemy(name)
         scorePressure = ScorePressureController.forEnemy(name)

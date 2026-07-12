@@ -37,6 +37,27 @@ class DcGunAntiSurferTest {
         assertTrue(aim < 0.0, "expected aim away from the preserved positive-GF killing hit, got $aim")
     }
 
+    @Test
+    fun `recency weighting favors the newest matching observation`() {
+        val gun = DcGun(k = 2, halfLifeOverride = 0.25)
+        val features = gun.features(100.0, 8.0, 0.0, 0.0, 1.0, 10)
+
+        observe(gun, features, guessFactor = -0.6)
+        observe(gun, features, guessFactor = 0.6)
+
+        val aim = gun.aimRadians(features, 0.0, 1, 1.0, 0.0)
+        assertTrue(aim > 0.0, "expected the newer positive-GF observation to dominate, got $aim")
+    }
+
+    private fun observe(
+        gun: DcGun,
+        features: DoubleArray,
+        guessFactor: Double,
+    ) {
+        gun.onFire(features, 0.0, 0.0, 0, 10.0, 0.0, 1, 1.0)
+        gun.update(10, sin(guessFactor) * 100.0, cos(guessFactor) * 100.0)
+    }
+
     private data class ShotToken(
         val id: Int,
     )

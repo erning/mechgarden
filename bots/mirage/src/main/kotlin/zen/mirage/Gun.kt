@@ -24,6 +24,32 @@ import kotlin.math.sin
 class Gun(
     private val bot: AdvancedRobot,
 ) {
+    data class PowerPlan(
+        val profile: FirePowerSelector.Profile,
+        val floor: Double,
+        val adaptive: Boolean,
+    ) {
+        init {
+            require(floor >= Rules.MIN_BULLET_POWER && floor <= Rules.MAX_BULLET_POWER) { "invalid power floor: $floor" }
+        }
+
+        companion object {
+            internal fun forSituation(
+                policyProfile: FirePowerSelector.Profile,
+                policyFloor: Double,
+                adaptivePower: Boolean,
+                antiRamFireActive: Boolean,
+                lowThreatHarvestActive: Boolean,
+                tacticalFloor: Double,
+            ): PowerPlan =
+                when {
+                    antiRamFireActive -> PowerPlan(FirePowerSelector.Profile.AGGRESSIVE, tacticalFloor, adaptive = false)
+                    lowThreatHarvestActive -> PowerPlan(FirePowerSelector.Profile.BALANCED, tacticalFloor, adaptivePower)
+                    else -> PowerPlan(policyProfile, policyFloor, adaptivePower)
+                }
+        }
+    }
+
     private var antiSurferEvidence = AntiSurferEvidence()
     private var vguns = VirtualGuns(antiSurferEvidence)
     private val gfGun = GfFireGun(9)
@@ -46,9 +72,6 @@ class Gun(
     private var lastProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
     private var lastTheoryMea = false
     private var antiSurferSelectedShots = 0
-    private var defaultPowerProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
-    private var defaultPowerFloor: Double = DC_POWER_FLOOR_BASE
-    private var adaptivePowerEnabled = false
 
     /** Smoothed enemy lateral speed — the surfer-detection signal. High (>5)
      *  means the enemy orbits consistently → likely a surfer that reacts to real
@@ -77,18 +100,6 @@ class Gun(
         offenseStats = OffenseStats.forEnemy(name)
     }
 
-    fun setDefaultPowerProfile(profile: FirePowerSelector.Profile) {
-        defaultPowerProfile = profile
-    }
-
-    fun setDefaultPowerFloor(power: Double) {
-        defaultPowerFloor = power.coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
-    }
-
-    fun setAdaptivePower(enabled: Boolean) {
-        adaptivePowerEnabled = enabled
-    }
-
     /** Returns the real bullet fired this scan (for callers that track it), or
      *  null when the gate held fire. */
     fun fireControl(
@@ -96,6 +107,7 @@ class Gun(
         frame: Tracker.Frame,
         fieldWidth: Double,
         fieldHeight: Double,
+        powerPlan: PowerPlan,
         holdFire: Boolean = false,
     ): robocode.Bullet? {
         val enemy = frame.enemy
@@ -171,12 +183,13 @@ class Gun(
                 learnedAim
             }
         lastAim = aim
-        val evPower = choosePower(vguns.hitRate(aim), distance)
+        val halfBotAngleRadians = atan(Kinematics.HALF_BOT / distance)
+        val evPower = choosePower(vguns.hitRate(aim), halfBotAngleRadians)
         val energyLead = bot.energy - enemy.energy
-        val dcFloor = dcFloorOverride()
+        val dcFloor = dcFloorOverride(powerPlan.floor)
         val tieredFloor = if (energyLead > ENERGY_LEAD_THRESHOLD) maxOf(AGGRESSIVE_FLOOR, dcFloor) else dcFloor
         val baseFloor = if (aim == VirtualGuns.Aim.GF_DC || aim == VirtualGuns.Aim.GF_DC_AS) tieredFloor else Rules.MIN_BULLET_POWER
-        val powerSelection = firePowerSelector.select(defaultPowerProfile, adaptivePowerEnabled)
+        val powerSelection = firePowerSelector.select(powerPlan.profile, powerPlan.adaptive)
         val powerProfile = powerSelection.profile
         lastProfile = powerProfile
         val power = capPower(firePowerSelector.apply(powerProfile, evPower, baseFloor), bot.energy, enemy.energy)
@@ -192,23 +205,22 @@ class Gun(
             if (useTheoryMea) {
                 Double.NaN
             } else {
-                gunMea(bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, distance)
+                gunMea(bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, theoryEscapeRadians)
             }
         val maxEscapeRadians = if (useTheoryMea) theoryEscapeRadians else preciseEscapeRadians
-        val halfBotGf = atan(Kinematics.HALF_BOT / distance) / maxEscapeRadians
+        val halfBotGf = halfBotAngleRadians / maxEscapeRadians
 
         val distLatSeg = Segments.dist3(distance) * 3 + Segments.lat3(abs(lateralSpeed))
         val accelSeg = Segments.lat3(abs(lateralSpeed)) * 3 + Segments.accel3(Segments.accelSign(accel))
-        val wallSeg =
-            distLatSeg * 3 +
-                Segments.wall3((tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (distance / bulletSpeed).coerceAtLeast(1.0))
+        val wallForwardRatio = (tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (distance / bulletSpeed).coerceAtLeast(1.0)
+        val wallSeg = distLatSeg * 3 + Segments.wall3(wallForwardRatio)
         val dcFeat =
             activeDcGun.features(
                 distance,
                 abs(lateralSpeed),
                 advancingSpeed,
                 accel,
-                (tracker.forwardWallSpace / Kinematics.MAX_VELOCITY) / (distance / bulletSpeed).coerceAtLeast(1.0),
+                wallForwardRatio,
                 tracker.timeSinceDirectionChange(),
             )
 
@@ -242,8 +254,7 @@ class Gun(
         val selectedAngle = applyShieldAimProfile(rawSelected, shieldAimProfile, ctx.distance)
 
         val gunTurn = turret.aimAtRadians(selectedAngle)
-        val tolerance = atan(Kinematics.HALF_BOT / distance)
-        val aligned = abs(gunTurn) < tolerance
+        val aligned = abs(gunTurn) < halfBotAngleRadians
         val affordable = ctx.power <= bot.energy - ENERGY_RESERVE
         val fresh = tracker.scanAge(bot.time) <= FIRE_STALE_TICKS
         if (!holdFire && bot.gunHeat == 0.0 && aligned && affordable && fresh && ctx.power >= Rules.MIN_BULLET_POWER) {
@@ -251,7 +262,7 @@ class Gun(
             if (bullet != null) {
                 val preciseTrainingEscapeRadians =
                     if (preciseEscapeRadians.isNaN()) {
-                        gunMea(ctx.bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, distance)
+                        gunMea(ctx.bulletSpeed, enemy.x, enemy.y, enemy.headingRadians, enemy.velocity, theoryEscapeRadians)
                     } else {
                         preciseEscapeRadians
                     }
@@ -329,7 +340,7 @@ class Gun(
     /** DC gunfire power floor. The mirage.powerfloor override (A/B tuning) probes
      *  whether faster, lower-power bullets hit adaptive movers more often (smaller
      *  escape angle) — default keeps the tuned economy floor. */
-    private fun dcFloorOverride(): Double =
+    private fun dcFloorOverride(defaultPowerFloor: Double): Double =
         System.getProperty("mirage.powerfloor")?.toDoubleOrNull()?.coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
             ?: defaultPowerFloor
 
@@ -362,9 +373,8 @@ class Gun(
         enemyY: Double,
         enemyHeadingRadians: Double,
         enemyVelocity: Double,
-        distance: Double,
+        theoryEscapeRadians: Double,
     ): Double {
-        val theory = asin(Kinematics.MAX_VELOCITY / bulletSpeed)
         val target = Kinematics.Pose(enemyX, enemyY, enemyHeadingRadians, enemyVelocity)
         return PreciseMea
             .halfEscapeRadians(
@@ -376,7 +386,7 @@ class Gun(
                 bot.time,
                 bot.battleFieldWidth,
                 bot.battleFieldHeight,
-            ).coerceIn(MIRAGE_MIN_ESCAPE_RADIANS, theory)
+            ).coerceIn(MIRAGE_MIN_ESCAPE_RADIANS, theoryEscapeRadians)
     }
 
     fun recordBulletHit(bullet: robocode.Bullet) {
@@ -602,18 +612,19 @@ class Gun(
     /** Expected-value firepower over candidate powers, capped by energy and overkill. */
     private fun choosePower(
         baseHitRate: Double,
-        distance: Double,
+        halfBotAngleRadians: Double,
     ): Double {
-        val distanceFactor = (atan(Kinematics.HALF_BOT / distance) / REF_HALF_ANGLE).coerceIn(0.0, 2.0)
+        val distanceFactor = (halfBotAngleRadians / REF_HALF_ANGLE).coerceIn(0.0, 2.0)
         var best = Rules.MIN_BULLET_POWER
         var bestValue = -Double.MAX_VALUE
-        for (power in CANDIDATE_POWERS) {
-            val escape = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(power))
-            val pHit = (baseHitRate * REF_ESCAPE / escape * distanceFactor).coerceIn(0.0, 1.0)
-            val value = (pHit * Rules.getBulletDamage(power) - (1.0 - pHit) * power) / (1.0 + power / 5.0)
+        for (candidate in POWER_CANDIDATES) {
+            val pHit = (baseHitRate * REF_ESCAPE / candidate.escapeRadians * distanceFactor).coerceIn(0.0, 1.0)
+            val value =
+                (pHit * candidate.damage - (1.0 - pHit) * candidate.power) /
+                    (1.0 + candidate.power / 5.0)
             if (value > bestValue) {
                 bestValue = value
-                best = power
+                best = candidate.power
             }
         }
         return best
@@ -647,6 +658,12 @@ class Gun(
         val useTheoryMea: Boolean,
     )
 
+    private class PowerCandidate(
+        val power: Double,
+        val escapeRadians: Double,
+        val damage: Double,
+    )
+
     private companion object {
         const val ENERGY_RESERVE = 0.1
         const val ENERGY_DIVISOR = 4.0
@@ -658,7 +675,6 @@ class Gun(
         const val AS_MIN_HIT_RATE_LEAD = 0.03
         const val AS_EXIT_HIT_RATE_LEAD = 0.005
 
-        const val DC_POWER_FLOOR_BASE = 1.2
         const val ENERGY_LEAD_THRESHOLD = 20.0
         const val AGGRESSIVE_FLOOR = 2.0
         const val MIN_KILL_ENERGY = 16.0
@@ -673,12 +689,19 @@ class Gun(
         /** Precise-MEA floor shared with the surf side (Mirage.MIN_ESCAPE_RADIANS).
          *  Kept here too so the gun is self-contained if the floor is tuned. */
         const val MIRAGE_MIN_ESCAPE_RADIANS = 0.18
-        val CANDIDATE_POWERS = doubleArrayOf(0.1, 0.5, 1.0, 1.5, 2.0, 3.0)
-
         private const val REF_POWER = 2.0
         private const val REF_DISTANCE = 500.0
         private val REF_ESCAPE = asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(REF_POWER))
         private val REF_HALF_ANGLE = atan(Kinematics.HALF_BOT / REF_DISTANCE)
+        private val POWER_CANDIDATES =
+            doubleArrayOf(0.1, 0.5, 1.0, 1.5, 2.0, 3.0)
+                .map { power ->
+                    PowerCandidate(
+                        power,
+                        asin(Kinematics.MAX_VELOCITY / Rules.getBulletSpeed(power)),
+                        Rules.getBulletDamage(power),
+                    )
+                }.toTypedArray()
 
         private val AIM = VirtualGuns.Aim.values()
         private val AIM_LABELS = arrayOf("HO", "LIN", "CIR", "GFD", "GFR", "GFA", "GFW", "DC", "AS")

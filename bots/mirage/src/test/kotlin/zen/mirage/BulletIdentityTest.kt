@@ -3,6 +3,7 @@ package zen.mirage
 import robocode.Bullet
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -78,6 +79,35 @@ class BulletIdentityTest {
     }
 
     @Test
+    fun adaptiveFirepowerInterleavesWhileEarlierShotsArePending() {
+        withPowerOverride("auto") {
+            val selector = FirePowerSelector()
+            val selected =
+                List(4) { index ->
+                    selector.select().also { selector.onFire(it, bullet(id = 200 + index, active = true)) }.profile
+                }
+
+            assertEquals(
+                listOf(
+                    FirePowerSelector.Profile.BALANCED,
+                    FirePowerSelector.Profile.ECONOMY,
+                    FirePowerSelector.Profile.BALANCED,
+                    FirePowerSelector.Profile.ECONOMY,
+                ),
+                selected,
+            )
+        }
+    }
+
+    @Test
+    fun invalidPowerOverrideFailsFast() {
+        withPowerOverride("balnced") {
+            val error = assertFailsWith<IllegalArgumentException> { FirePowerSelector().select(FirePowerSelector.Profile.ECONOMY) }
+            assertTrue(error.message.orEmpty().contains("balnced"))
+        }
+    }
+
+    @Test
     fun policyShotsDoNotPolluteALaterAdaptiveTrial() {
         val selector = FirePowerSelector()
         val selection = selector.select(FirePowerSelector.Profile.ECONOMY, adaptiveEnabled = false)
@@ -103,4 +133,21 @@ class BulletIdentityTest {
             active,
             id,
         )
+
+    private inline fun withPowerOverride(
+        value: String,
+        block: () -> Unit,
+    ) {
+        val previous = System.getProperty("mirage.power")
+        System.setProperty("mirage.power", value)
+        try {
+            block()
+        } finally {
+            if (previous == null) {
+                System.clearProperty("mirage.power")
+            } else {
+                System.setProperty("mirage.power", previous)
+            }
+        }
+    }
 }

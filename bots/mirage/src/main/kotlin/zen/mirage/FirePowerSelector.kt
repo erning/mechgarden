@@ -51,25 +51,38 @@ class FirePowerSelector {
 
     private val rewards = PerShotRewards(PROFILES.size, PRIOR_WEIGHT, PRIOR_REWARD)
 
+    data class Selection(
+        val profile: Profile,
+        val adaptive: Boolean,
+    )
+
     fun beginRound() {
-        rewards.beginRound()
+        // Bullets left in flight when a round ended already spent their energy
+        // but can no longer score. Charging that cost avoids favoring BALANCED
+        // merely because its slower, higher-power bullets are censored more often.
+        rewards.settlePending { -it.power }
     }
 
-    fun selectProfile(defaultProfile: Profile = Profile.BALANCED): Profile {
+    fun select(
+        defaultProfile: Profile = Profile.BALANCED,
+        adaptiveEnabled: Boolean = false,
+    ): Selection {
         // Firepower profile selection. Three modes (mirage.power system property):
         //  - <NAME>: force that profile (e.g. economy, aggressive) for A/B tuning.
-        //  - auto: re-enable the explore/exploit adaptation.
-        //  - absent: use the caller's tuned default.
-        // Live per-shot exploration was measured to always settle back on BALANCED
-        // (higher power nets more energy against a well-predicted mover — the hit
-        // rate is near power-independent, so damage per hit dominates), so the
-        // default skips the exploration rounds entirely.
+        //  - auto: force explore/exploit adaptation for A/B tuning.
+        //  - absent: adapt only when the caller's cross-round safety gate allows it.
+        // Non-adaptive shots are deliberately excluded from the reward model, so
+        // cold-start ECONOMY rounds cannot bias a later score-pressure trial.
         val key = System.getProperty("mirage.power")?.trim()?.lowercase()
         return when (key) {
-            "auto" -> explorationProfile() ?: bestProfile()
-            null -> defaultProfile
-            "balanced" -> Profile.BALANCED
-            else -> Profile.values().firstOrNull { it.name.equals(key, ignoreCase = true) } ?: Profile.BALANCED
+            "auto" -> adaptiveSelection()
+            null -> if (adaptiveEnabled) adaptiveSelection() else Selection(defaultProfile, adaptive = false)
+            "policy" -> Selection(defaultProfile, adaptive = false)
+            else ->
+                Selection(
+                    Profile.values().firstOrNull { it.name.equals(key, ignoreCase = true) } ?: Profile.BALANCED,
+                    adaptive = false,
+                )
         }
     }
 
@@ -84,10 +97,10 @@ class FirePowerSelector {
     }
 
     fun onFire(
-        profile: Profile,
+        selection: Selection,
         bullet: Bullet,
     ) {
-        rewards.onFire(profile.ordinal, bullet)
+        if (selection.adaptive) rewards.onFire(selection.profile.ordinal, bullet)
     }
 
     fun recordHit(bullet: Bullet) {
@@ -103,11 +116,20 @@ class FirePowerSelector {
     }
 
     private fun explorationProfile(): Profile? {
+        var selected: Profile? = null
+        var selectedAllocation = Long.MAX_VALUE
         for (profile in ACTIVE) {
-            if (rewards.shotCount(profile.ordinal) < EXPLORE_SHOTS) return profile
+            if (rewards.shotCount(profile.ordinal) >= EXPLORE_SHOTS) continue
+            val allocation = rewards.allocatedCount(profile.ordinal)
+            if (allocation < selectedAllocation) {
+                selected = profile
+                selectedAllocation = allocation
+            }
         }
-        return null
+        return selected
     }
+
+    private fun adaptiveSelection(): Selection = Selection(explorationProfile() ?: bestProfile(), adaptive = true)
 
     private fun bestProfile(): Profile {
         var best = ACTIVE[0]
@@ -122,6 +144,8 @@ class FirePowerSelector {
         return best
     }
 
+    internal fun resolvedShots(profile: Profile): Long = rewards.shotCount(profile.ordinal)
+
     companion object {
         const val EXPLORE_SHOTS = 16L
         private const val PRIOR_REWARD = 0.0
@@ -131,12 +155,12 @@ class FirePowerSelector {
         /** Cached enum array — avoids the per-call clone of Profile.values(). */
         private val PROFILES = Profile.values()
 
-        /** Profiles the selector explores and compares in normal play. BALANCED is
-         *  the tuned economy floor; ECONOMY drops to fast cheap bullets, which net
+        /** Profiles the selector explores and compares in score-pressure play.
+         *  BALANCED keeps the tuned power floor; ECONOMY drops to fast cheap bullets, which net
          *  more energy against hard-to-hit movers (smaller escape angle → more
          *  hits, less power wasted on misses). The high-pressure profiles stay
-         *  reachable only via mirage.power=balanced (forced) since very high power
-         *  is rarely EV-optimal against a competent dodger. */
+         *  reachable only through explicit mirage.power overrides since very high
+         *  power is rarely EV-optimal against a competent dodger. */
         private val ACTIVE = arrayOf(Profile.BALANCED, Profile.ECONOMY)
 
         private val perEnemy = HashMap<String, FirePowerSelector>()

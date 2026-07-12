@@ -60,6 +60,12 @@ abstract class Mirage : AdvancedRobot() {
      *  [HarvestController]; default on, `off` restores the old range behavior. */
     private var harvest = HarvestController()
 
+    /** Enables adaptive firepower only after this opponent has demonstrated that
+     *  Mirage already survives reliably with a low bullet-damage burden. */
+    private var scorePressure = ScorePressureController()
+    private var scorePowerThisRound = false
+    private var scorePowerEnergyBackoff = false
+
     /** Live engagement range — adapted per scan from the enemy's advancing velocity
      *  (charger → keep distance, kiter → close in) and threaded into the surfer. */
     private var targetRange = Distancing.BASE_TARGET
@@ -297,6 +303,12 @@ abstract class Mirage : AdvancedRobot() {
         // for the rest of the round.
         gun.setDefaultPowerProfile(survivalPolicy.powerProfile)
         gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
+        if (energy < SCORE_POWER_MIN_ENERGY) scorePowerEnergyBackoff = true
+        gun.setAdaptivePower(
+            scorePowerThisRound &&
+                !scorePowerEnergyBackoff &&
+                !(antiRamEnabled() && ramThreatDetector.active()),
+        )
         if (antiRamEnabled() && ramThreatDetector.active()) {
             gun.setDefaultPowerProfile(FirePowerSelector.Profile.AGGRESSIVE)
             gun.setDefaultPowerFloor(HARVEST_POWER_FLOOR)
@@ -484,6 +496,7 @@ abstract class Mirage : AdvancedRobot() {
         )
         movementSelector.recordDamage(damageThisRound)
         harvest.recordRound(threatStats.enemyHitRate(), threatStats.wavesObserved(), damageThisRound)
+        scorePressure.recordRound(survived = energy > 0.0, damageTaken = damageThisRound)
         survivalPolicySelector.recordRound(
             survivalPolicy,
             survived = energy > 0.0,
@@ -508,7 +521,9 @@ abstract class Mirage : AdvancedRobot() {
                     antiRamPlanner.debugSummary() + " " +
                     shotDodger.debugSummary() + " " +
                     activeShieldGun.debugSummary() + " " +
-                    gun.debugStats() + " prof=$movementProfile policy=${survivalPolicy.kind} range=${"%.0f".format(targetRange)} " +
+                    gun.debugStats() + " " +
+                    scorePressure.debugSummary() + "/energyBackoff:$scorePowerEnergyBackoff " +
+                    "prof=$movementProfile policy=${survivalPolicy.kind} range=${"%.0f".format(targetRange)} " +
                     "hitGF=${hitGfBins.toList()} ehr=$enemyHitRateText",
             )
         }
@@ -536,6 +551,9 @@ abstract class Mirage : AdvancedRobot() {
         gun.setDefaultPowerFloor(survivalPolicy.powerFloor)
         threatStats = ThreatStats.forEnemy(name)
         harvest = HarvestController.forEnemy(name)
+        scorePressure = ScorePressureController.forEnemy(name)
+        scorePowerThisRound = scorePressure.beginRound()
+        scorePowerEnergyBackoff = false
     }
 
     private fun selectedMovementProfile(): MovementProfileSelector.Profile {
@@ -724,6 +742,7 @@ abstract class Mirage : AdvancedRobot() {
         const val RAM_MIN_ENERGY = 20.0
         const val HARVEST_POWER_FLOOR = 1.2
         const val LOW_POWER_PROFILE_TICKS = 30L
+        const val SCORE_POWER_MIN_ENERGY = 30.0
         const val SHIELD_STATIONARY_PROFILE_TICKS = 12L
         const val MAX_VIRTUAL_PREDICTION_TICKS = 8L
 

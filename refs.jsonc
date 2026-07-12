@@ -277,6 +277,60 @@
       "suzushin7.nano.Galaxy03_1.01.jar",
       "jcs.AutoBot_4.2.1.jar"
     ],
+    // The 25 lowest-KNNPBI pairings for Mirage 0.9.4, captured on 2026-07-12 at 01:21:34 UTC.
+    // Source: https://rumble.robowiki.net/BotDetails?game=roborumble&name=zen.Mirage%200.9.4&order=-KNNPBI
+    // Entries are ordered from the most negative KNNPBI upward.
+    "mirage-094-knnpbi-worst-25": [
+      "tcf.Drifter_29.jar",
+      "kms.Royal_0.15M.jar",
+      "learn.ISmart_2.0s.jar",
+      "wiki.Wolverine_2.1.jar",
+      "gg.Wolverine_2.0.jar",
+      "ers.nano.lig.LigMA_1.9.jar",
+      "supersample.SuperRamFire_1.0.jar",
+      "dft.Cyanide_1.90.jar",
+      "stelo.FretNano_1.1.jar",
+      "apc.botM_3.0.jar",
+      "nat.BlackHole_2.0gamma.jar",
+      "dmp.nano.Eve_3.41.jar",
+      "unarmedlad.nano.VirginSteele_2.2.jar",
+      "wiki.nano.DevilFISH_1.0.jar",
+      "takeBot.SpiralCrash_1.0.jar",
+      "toz.Gnome_1.1.jar",
+      "ary.nano.AceSurf_1.2.jar",
+      "mld.LittleBlackBook_1.69e.jar",
+      "mld.jdc.nano.LittleBlackBook_1.0.jar",
+      "WarfaJibril.Jibril_Warfa_Andromeda_1.11.jar",
+      "codemojo.nano.Woot_1.0.jar",
+      "mn.micro.perceptual.Mimic_1.0.0.jar",
+      "slugzilla.OrbitPattern_1.1.jar",
+      "pa3k.Manta_1.20.jar",
+      "et.Predator_1.8.jar"
+    ],
+    // The score-pressure subset of Mirage 0.9.4's worst 25: baseline survival
+    // >= 93% and bullet damage taken <= 35 per round. Excludes the five unsafe
+    // gun matchups and SuperRamFire, which remains owned by anti-ram behavior.
+    "mirage-094-score-pressure-19": [
+      "kms.Royal_0.15M.jar",
+      "wiki.Wolverine_2.1.jar",
+      "gg.Wolverine_2.0.jar",
+      "ers.nano.lig.LigMA_1.9.jar",
+      "stelo.FretNano_1.1.jar",
+      "apc.botM_3.0.jar",
+      "dmp.nano.Eve_3.41.jar",
+      "unarmedlad.nano.VirginSteele_2.2.jar",
+      "wiki.nano.DevilFISH_1.0.jar",
+      "takeBot.SpiralCrash_1.0.jar",
+      "toz.Gnome_1.1.jar",
+      "ary.nano.AceSurf_1.2.jar",
+      "mld.LittleBlackBook_1.69e.jar",
+      "mld.jdc.nano.LittleBlackBook_1.0.jar",
+      "WarfaJibril.Jibril_Warfa_Andromeda_1.11.jar",
+      "codemojo.nano.Woot_1.0.jar",
+      "slugzilla.OrbitPattern_1.1.jar",
+      "pa3k.Manta_1.20.jar",
+      "et.Predator_1.8.jar"
+    ],
     // The 100 lowest-KNNPBI pairings for Mirage 0.9.3, captured on 2026-07-11 at 08:24:37 UTC.
     // Source: https://rumble.robowiki.net/BotDetails?game=roborumble&name=zen.Mirage%200.9.3&order=-KNNPBI
     // Entries are ordered from the most negative KNNPBI upward.

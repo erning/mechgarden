@@ -48,6 +48,7 @@ class Gun(
     private var antiSurferSelectedShots = 0
     private var defaultPowerProfile: FirePowerSelector.Profile = FirePowerSelector.Profile.BALANCED
     private var defaultPowerFloor: Double = DC_POWER_FLOOR_BASE
+    private var adaptivePowerEnabled = false
 
     /** Smoothed enemy lateral speed — the surfer-detection signal. High (>5)
      *  means the enemy orbits consistently → likely a surfer that reacts to real
@@ -82,6 +83,10 @@ class Gun(
 
     fun setDefaultPowerFloor(power: Double) {
         defaultPowerFloor = power.coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
+    }
+
+    fun setAdaptivePower(enabled: Boolean) {
+        adaptivePowerEnabled = enabled
     }
 
     /** Returns the real bullet fired this scan (for callers that track it), or
@@ -171,7 +176,8 @@ class Gun(
         val dcFloor = dcFloorOverride()
         val tieredFloor = if (energyLead > ENERGY_LEAD_THRESHOLD) maxOf(AGGRESSIVE_FLOOR, dcFloor) else dcFloor
         val baseFloor = if (aim == VirtualGuns.Aim.GF_DC || aim == VirtualGuns.Aim.GF_DC_AS) tieredFloor else Rules.MIN_BULLET_POWER
-        val powerProfile = firePowerSelector.selectProfile(defaultPowerProfile)
+        val powerSelection = firePowerSelector.select(defaultPowerProfile, adaptivePowerEnabled)
+        val powerProfile = powerSelection.profile
         lastProfile = powerProfile
         val power = capPower(firePowerSelector.apply(powerProfile, evPower, baseFloor), bot.energy, enemy.energy)
 
@@ -297,7 +303,7 @@ class Gun(
                         bullet,
                     )
                 }
-                firePowerSelector.onFire(powerProfile, bullet)
+                firePowerSelector.onFire(powerSelection, bullet)
                 shieldAimSelector.onFire(shieldAimProfile, bullet)
                 if (aim == VirtualGuns.Aim.GF_DC_AS) antiSurferSelectedShots++
                 return bullet

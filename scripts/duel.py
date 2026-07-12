@@ -69,6 +69,7 @@ class ScoreRow:
     score: float
     survival: float
     bullet_damage: float
+    bullet_bonus: float
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,8 @@ class DuelResult:
     survival: float | None
     dealt_per_round: float | None
     taken_per_round: float | None
+    bonus_per_round: float | None
+    enemy_bonus_per_round: float | None
 
 
 @dataclass(frozen=True)
@@ -756,7 +759,7 @@ def parse_results(path: Path) -> dict[str, ScoreRow]:
         return rows
     for line in path.read_text(errors="replace").splitlines():
         columns = line.split("\t")
-        if len(columns) < 5 or ":" not in columns[0]:
+        if len(columns) < 6 or ":" not in columns[0]:
             continue
         robot_name = columns[0].split(":", 1)[1].strip()
         try:
@@ -764,6 +767,7 @@ def parse_results(path: Path) -> dict[str, ScoreRow]:
                 score=parse_score(columns[1]),
                 survival=parse_score(columns[2]),
                 bullet_damage=parse_score(columns[4]),
+                bullet_bonus=parse_score(columns[5]),
             )
         except ValueError:
             continue
@@ -777,7 +781,7 @@ def compute_result(
     enemy_row: ScoreRow | None,
 ) -> DuelResult:
     if robot_row is None or enemy_row is None:
-        return DuelResult(enemy, None, None, None, None)
+        return DuelResult(enemy, None, None, None, None, None, None)
 
     total_score = robot_row.score + enemy_row.score
     total_survival = robot_row.survival + enemy_row.survival
@@ -787,6 +791,8 @@ def compute_result(
         survival=(100 * robot_row.survival / total_survival) if total_survival > 0 else 0.0,
         dealt_per_round=robot_row.bullet_damage / rounds if rounds > 0 else 0.0,
         taken_per_round=enemy_row.bullet_damage / rounds if rounds > 0 else 0.0,
+        bonus_per_round=robot_row.bullet_bonus / rounds if rounds > 0 else 0.0,
+        enemy_bonus_per_round=enemy_row.bullet_bonus / rounds if rounds > 0 else 0.0,
     )
 
 
@@ -853,10 +859,21 @@ def print_summary(robot: RobotCandidate, rounds: int, results: Sequence[DuelResu
             format_float(result.survival),
             format_float(result.dealt_per_round, 1),
             format_float(result.taken_per_round, 1),
+            format_float(result.bonus_per_round, 1),
+            format_float(result.enemy_bonus_per_round, 1),
         )
         for result in results
     ]
-    headers = ("ENEMY", "VERSION", "APS%", "SURV%", "DEALT/r", "TAKEN/r")
+    headers = (
+        "ENEMY",
+        "VERSION",
+        "APS%",
+        "SURV%",
+        "DEALT/r",
+        "TAKEN/r",
+        "BONUS/r",
+        "OPP-BONUS/r",
+    )
     widths = [
         max(len(headers[column]), *(len(row[column]) for row in rows))
         for column in range(len(headers))
@@ -872,6 +889,8 @@ def print_summary(robot: RobotCandidate, rounds: int, results: Sequence[DuelResu
         and result.survival is not None
         and result.dealt_per_round is not None
         and result.taken_per_round is not None
+        and result.bonus_per_round is not None
+        and result.enemy_bonus_per_round is not None
     ]
     if scored:
         aps_values = [result.aps for result in scored if result.aps is not None]
@@ -888,24 +907,40 @@ def print_summary(robot: RobotCandidate, rounds: int, results: Sequence[DuelResu
             for result in scored
             if result.taken_per_round is not None
         ]
+        bonus_values = [
+            result.bonus_per_round
+            for result in scored
+            if result.bonus_per_round is not None
+        ]
+        enemy_bonus_values = [
+            result.enemy_bonus_per_round
+            for result in scored
+            if result.enemy_bonus_per_round is not None
+        ]
         pwin = sum(1.0 if aps > 50 else 0.5 if aps == 50 else 0.0 for aps in aps_values)
         mean_aps = sum(aps_values) / len(aps_values)
         mean_survival = sum(survival_values) / len(survival_values)
         mean_dealt = sum(dealt_values) / len(dealt_values)
         mean_taken = sum(taken_values) / len(taken_values)
+        mean_bonus = sum(bonus_values) / len(bonus_values)
+        mean_enemy_bonus = sum(enemy_bonus_values) / len(enemy_bonus_values)
         print()
         print(
             f"APS: {mean_aps:.2f}%  |  PWIN: {100 * pwin / len(scored):.2f}%  |  "
             f"Survival: {mean_survival:.2f}%  |  pairings: {len(scored)} "
             f"({rounds} rounds each)  |  dealt/r: {mean_dealt:.1f}  |  "
-            f"taken/r: {mean_taken:.1f}"
+            f"taken/r: {mean_taken:.1f}  |  bonus/r: {mean_bonus:.1f}  |  "
+            f"opp-bonus/r: {mean_enemy_bonus:.1f}"
         )
     sys.stdout.flush()
 
 
 def write_output(path: Path, robot: RobotCandidate, results: Sequence[DuelResult]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["robot\tenemy\taps\tsurvival\tdealt_per_round\ttaken_per_round"]
+    lines = [
+        "robot\tenemy\taps\tsurvival\tdealt_per_round\ttaken_per_round\t"
+        "bonus_per_round\tenemy_bonus_per_round"
+    ]
     for result in results:
         lines.append(
             "\t".join(
@@ -920,6 +955,12 @@ def write_output(path: Path, robot: RobotCandidate, results: Sequence[DuelResult
                     ""
                     if result.taken_per_round is None
                     else f"{result.taken_per_round:.4f}",
+                    ""
+                    if result.bonus_per_round is None
+                    else f"{result.bonus_per_round:.4f}",
+                    ""
+                    if result.enemy_bonus_per_round is None
+                    else f"{result.enemy_bonus_per_round:.4f}",
                 )
             )
         )

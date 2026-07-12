@@ -64,15 +64,21 @@ class BulletShadows {
         bullet: Bullet,
         now: Long,
     ) {
-        val i = shots.indexOfFirst { it.bullet === bullet }
+        // Bullet events contain a reconstructed Bullet instance. Robocode's
+        // Bullet.equals() matches that instance to the fired bullet by its
+        // engine bullet id; reference identity can therefore never resolve an
+        // ordinary BulletHit/BulletMissed/BulletHitBullet event.
+        val i = shots.indexOfFirst { it.bullet == bullet }
         if (i < 0) return
         val shot = shots.removeAt(i)
         for (c in shot.casts) if (c.crossTime > now) c.wave.removeShadow(c.lowGf, c.highGf)
     }
 
     fun onBulletGone(bullet: Bullet) {
-        shots.removeAll { it.bullet === bullet }
+        shots.removeAll { it.bullet == bullet }
     }
+
+    internal fun trackedShotCount(): Int = shots.size
 
     private fun cast(
         shot: Shot,

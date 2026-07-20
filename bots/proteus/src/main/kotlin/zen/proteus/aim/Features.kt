@@ -28,19 +28,21 @@ internal object Features {
     const val CURRENT_GF = 9
     const val VIRTUALITY = 10
 
+    // Learned offline by EmbeddingTrainer on basic+classic datasets
+    // (24 epochs, density loss 1.4267 -> 1.3897); was hand-tuned before.
     val WEIGHTS =
         doubleArrayOf(
-            3.0, // BFT
-            3.0, // LAT_VEL
-            2.0, // ADV_VEL
-            2.0, // VELOCITY
-            1.0, // ACCEL
-            1.0, // DIR_CHANGE
-            1.0, // DISTANCE
-            2.0, // WALL_AHEAD
-            2.0, // WALL_REVERSE
-            1.0, // CURRENT_GF
-            1.0, // VIRTUALITY
+            1.8903, // BFT
+            1.2381, // LAT_VEL
+            1.1851, // ADV_VEL
+            0.6180, // VELOCITY
+            0.5407, // ACCEL
+            0.9389, // DIR_CHANGE
+            0.7590, // DISTANCE
+            1.5148, // WALL_AHEAD
+            1.4971, // WALL_REVERSE
+            0.4501, // CURRENT_GF
+            0.3679, // VIRTUALITY
         )
 
     fun compute(

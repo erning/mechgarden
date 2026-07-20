@@ -1,6 +1,7 @@
 package zen.proteus
 
 import robocode.AdvancedRobot
+import robocode.BattleEndedEvent
 import robocode.BulletHitBulletEvent
 import robocode.BulletHitEvent
 import robocode.BulletMissedEvent
@@ -10,6 +11,7 @@ import zen.proteus.aim.Aimer
 import zen.proteus.control.Controls
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
+import zen.proteus.diag.Dataset
 import zen.proteus.move.Mover
 import zen.proteus.radar.Radar
 import zen.proteus.shield.Shielder
@@ -184,6 +186,10 @@ abstract class Proteus : AdvancedRobot() {
 
     override fun onHitRobot(event: robocode.HitRobotEvent) {
         gameState.noteRobotCollision()
+    }
+
+    override fun onBattleEnded(event: BattleEndedEvent) {
+        Dataset.flushAll(this)
     }
 
     private companion object {

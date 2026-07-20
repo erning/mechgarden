@@ -5,6 +5,7 @@ import robocode.Rules
 import zen.proteus.control.Controls
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
+import zen.proteus.diag.Dataset
 import zen.proteus.knn.KnnModel
 import zen.proteus.move.Mover
 import zen.proteus.state.BotState
@@ -44,6 +45,7 @@ internal class Aimer(
     private val mover = mover
     private var profile: GfProfile? = null
     private var ourAvgPower = 2.0
+    private var currentEnemyName: String? = null
     private var models: GunModels? = null
     private var enemyLateralDirection = 1.0
     private var lastLatSign = 1.0
@@ -73,6 +75,9 @@ internal class Aimer(
         val hitAngleRadians = Angles.absoluteBearingRadians(wave.originX, wave.originY, x, y)
         val hitGf = wave.guessFactor(hitAngleRadians)
         profile?.recordPoint(hitGf)
+        currentEnemyName?.let { name ->
+            Dataset.write(name, entry.features, hitGf - POINT_HALF_WIDTH, hitGf + POINT_HALF_WIDTH)
+        }
         val didHit = wasRecentHit(time)
         val pointEntry = KnnModel.Entry(entry.features, hitGf - POINT_HALF_WIDTH, hitGf + POINT_HALF_WIDTH, didHit)
         models?.main?.add(pointEntry)
@@ -109,6 +114,10 @@ internal class Aimer(
         for (entry in aimWaves.update(enemy.x, enemy.y, time)) {
             val wave = entry.wave
             currentProfile?.record(wave.visitGfLo, wave.visitGfHi)
+            if (enemyName != null) {
+                Dataset.write(enemyName, entry.features, wave.visitGfLo, wave.visitGfHi)
+                currentEnemyName = enemyName
+            }
             val didHit = wasRecentHit(time)
             val sample = KnnModel.Entry(entry.features, wave.visitGfLo, wave.visitGfHi, didHit)
             currentModels?.main?.add(sample)

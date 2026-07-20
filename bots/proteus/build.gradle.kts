@@ -32,6 +32,23 @@ dependencies {
     testRuntimeOnly(files(robocodeJar))
 }
 
+// Offline-training source set (not part of the robot jar): reads .pgf datasets
+// collected by scripts/collect_dataset.py and learns the KNN embedding.
+sourceSets {
+    create("train") {
+        kotlin.srcDir("src/train/kotlin")
+        resources.srcDir("src/train/resources")
+    }
+}
+
+val trainEmbedding by tasks.registering(JavaExec::class) {
+    group = "proteus"
+    description = "Train the KNN embedding offline from collected .pgf datasets."
+    mainClass.set("zen.proteus.train.EmbeddingTrainer")
+    classpath = sourceSets["train"].runtimeClasspath
+    workingDir = rootProject.projectDir
+}
+
 tasks.named<Jar>("jar") {
     dependsOn(deleteOldBuiltJars)
     archiveFileName.set(robotJarFileName)

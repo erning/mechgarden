@@ -35,7 +35,7 @@ abstract class Proteus : AdvancedRobot() {
     private val gameState = GameState()
     private val radar = Radar(this)
     private val mover = Mover()
-    private val aimer = Aimer(this)
+    private val aimer = Aimer(this, mover)
     private lateinit var field: Battlefield
 
     private var pendingScan: ScannedRobotEvent? = null
@@ -89,7 +89,16 @@ abstract class Proteus : AdvancedRobot() {
         val enemy = gameState.enemy
         mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, field, time, controls)
         if (scan != null && enemy != null) {
-            aimer.aim(self, enemy, gameState.enemyAt(time - 1), gameState.enemyName, field, controls)
+            aimer.aim(
+                self,
+                enemy,
+                gameState.enemyAt(time - 1),
+                gameState.enemyName,
+                mover.enemyHitRate(),
+                mover.enemyAvgPower(),
+                field,
+                controls,
+            )
         }
         val bullet = controls.apply()
         if (bullet != null) {

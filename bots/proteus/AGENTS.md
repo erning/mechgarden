@@ -19,17 +19,17 @@ implementation is `abstract class Proteus` in `zen.proteus.Proteus` plus helpers
 under `zen.proteus.*`. Keep Proteus self-contained: no imports from other robot
 modules (see the root `AGENTS.md` self-containment rule).
 
-Current state: M5 complete (see `docs/roadmap.md`) — radar infinity lock; enemy
+Current state: M6 complete (see `docs/roadmap.md`) — radar infinity lock; enemy
 fire detection with compensation; expanding enemy waves with precise
 intersection; a gated danger-model ensemble (hit bins, flattener, simulated
 HOT/linear/circular/avg-linear guns, CurrentGF, KNN danger) with dynamic
-accuracy weights and bullet-shadow discounts; three-option true surfing; and a
+accuracy weights and bullet-shadow discounts; three-option true surfing; a
 dual-tree KNN gun (main / anti-surfer hard-switched on our hit-rate interval,
-didHit-marked) trained by every-tick virtual waves. A best-first PathSurfer
-exists but is disabled behind `Mover.MOVEMENT_ENGINE` (loses even with the
-ensemble; see `docs/roadmap.md` M3/M5). Later milestones plug into the existing
-seams documented in `docs/architecture.md`; extend them instead of adding
-parallel systems.
+didHit-marked); guarded firepower (kill-shot / disable guard over a distance
+rule) and plan-linked active bullet shadowing at fire time. A best-first
+PathSurfer exists but is disabled behind `Mover.MOVEMENT_ENGINE`. Later
+milestones plug into the existing seams documented in `docs/architecture.md`;
+extend them instead of adding parallel systems.
 
 ## Design Docs
 

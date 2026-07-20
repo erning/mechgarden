@@ -21,10 +21,29 @@ internal class KnnModel(
         val didHit: Boolean,
     )
 
-    private class Neighbor(
+    class Neighbor(
         val distance: Double,
         val entry: Entry,
     )
+
+    /** Neighbor-weighted density mass over [gfLo, gfHi] from a precomputed list. */
+    fun densityOf(
+        neighbors: List<Neighbor>,
+        gfLo: Double,
+        gfHi: Double,
+    ): Double {
+        if (neighbors.isEmpty()) return 0.0
+        var total = 0.0
+        var covered = 0.0
+        for (neighbor in neighbors) {
+            val weight = 1.0 / (0.1 + neighbor.distance)
+            total += weight
+            val overlapLo = max(gfLo, neighbor.entry.gfLo)
+            val overlapHi = min(gfHi, neighbor.entry.gfHi)
+            if (overlapLo < overlapHi) covered += weight
+        }
+        return if (total > 0.0) covered / total else 0.0
+    }
 
     private val entries = ArrayList<Entry>()
 
@@ -50,7 +69,7 @@ internal class KnnModel(
         if (entries.isEmpty()) return 0.0
         val neighbors = nearest(query, includeDidHit)
         if (neighbors.isEmpty()) return 0.0
-        return densityPeak(neighbors)
+        return peakOf(neighbors)
     }
 
     /** Neighbor-weighted density mass over [gfLo, gfHi], normalized to [0, 1]. */
@@ -75,7 +94,7 @@ internal class KnnModel(
     }
 
     /** The k nearest entries to [query] by weighted Manhattan distance. */
-    private fun nearest(
+    fun nearest(
         query: DoubleArray,
         includeDidHit: Boolean,
     ): List<Neighbor> {
@@ -113,7 +132,7 @@ internal class KnnModel(
     }
 
     /** Scanline argmax over weighted intervals (box-kernel KDE). */
-    private fun densityPeak(neighbors: List<Neighbor>): Double {
+    fun peakOf(neighbors: List<Neighbor>): Double {
         // Start events carry +weight, end events -weight; sweep keeps the level.
         val events = ArrayList<Pair<Double, Double>>(neighbors.size * 2)
         for (neighbor in neighbors) {

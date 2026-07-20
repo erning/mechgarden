@@ -8,6 +8,7 @@ import zen.proteus.move.danger.DangerEstimator
 import zen.proteus.move.danger.EnemyWave
 import zen.proteus.state.BotState
 import zen.proteus.state.GameState
+import zen.proteus.state.HitRate
 import zen.proteus.wave.BulletShadows
 import zen.proteus.wave.Wave
 import zen.proteus.wave.Waves
@@ -39,6 +40,7 @@ internal class Mover {
     private var lastPlan: PathSurfer.Plan? = null
     private var lastLatSign = 1.0
     private var dirChangeTicks = 0
+    private var enemyAvgPower = 2.0
     private val random = Random()
 
     fun onRoundStart() {
@@ -55,6 +57,7 @@ internal class Mover {
         shot: GameState.EnemyShot,
         battlefield: Battlefield,
     ) {
+        enemyAvgPower = enemyAvgPower * POWER_DECAY + shot.power * (1.0 - POWER_DECAY)
         val wave =
             Wave(shot.originX, shot.originY, shot.power, shot.time, shot.directAngleRadians, shot.lateralDirection)
         // Features of OUR movement as the enemy saw it at fire time.
@@ -62,6 +65,30 @@ internal class Mover {
             Features.compute(shot.enemyAtFire, shot.selfAtFire, shot.selfAtFirePrev, wave, battlefield, 0, dirChangeTicks)
         waves.add(EnemyWave(wave, features, shot.selfAtFire, shot.selfAtFirePrev))
     }
+
+    /** Enemy realized hit rate against us, from the active estimator. */
+    fun enemyHitRate(): HitRate? = estimator?.enemyHitRate
+
+    /** Rolling average of the enemy's bullet power. */
+    fun enemyAvgPower(): Double = enemyAvgPower
+
+    /** Active enemy waves nearest to reaching us, for shadow-aware aiming. */
+    fun surfWaves(
+        self: BotState,
+        time: Long,
+    ): List<EnemyWave> = waves.surfable(self.x, self.y, time)
+
+    /** Our bullets currently in flight, for shadow-aware aiming. */
+    fun ourBulletsInFlight(): List<OurBullets.Tracked> = ourBullets.all()
+
+    /** Danger of a GF interval on [entry] with extra hypothetical shadows added. */
+    fun dangerWithShadows(
+        entry: EnemyWave,
+        self: BotState,
+        gfLo: Double,
+        gfHi: Double,
+        extraShadows: List<DoubleArray>,
+    ): Double = estimator?.danger(entry, self.x, self.y, gfLo, gfHi, extraShadows) ?: 0.0
 
     /** One of our bullets just left the barrel. */
     fun onOurBullet(
@@ -223,6 +250,7 @@ internal class Mover {
 
     private companion object {
         const val MAX_AHEAD = 128.0
+        const val POWER_DECAY = 0.9
 
         // THREE_OPTION (default): the proven three-option surfer. PATH_SEARCH:
         // best-first path surfing; it threads narrow danger peaks too eagerly

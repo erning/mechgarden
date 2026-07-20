@@ -37,7 +37,10 @@ internal class DangerEstimator {
             CurrentGfModel(),
             KnnDangerModel(),
         )
-    private val enemyHitRate = HitRate()
+
+    /** Enemy realized hit rate against us (waves resolved vs connected). */
+    val enemyHitRate = HitRate()
+
     private val scores = HashMap<DangerModel, Double>()
 
     /** Combined danger mass over [gfLo, gfHi] for [wave] evaluated at (evalX, evalY). */

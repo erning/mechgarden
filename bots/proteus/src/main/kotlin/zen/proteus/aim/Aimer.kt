@@ -6,6 +6,7 @@ import zen.proteus.control.Controls
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
 import zen.proteus.knn.KnnModel
+import zen.proteus.move.Mover
 import zen.proteus.state.BotState
 import zen.proteus.state.HitRate
 import zen.proteus.wave.AimWaves
@@ -31,12 +32,17 @@ import kotlin.math.sin
  */
 internal class Aimer(
     private val robot: AdvancedRobot,
+    mover: Mover,
 ) {
     /** Our realized hit rate against the current enemy; drives the gun switch. */
     val hitRate = HitRate()
 
     private val aimWaves = AimWaves()
+    private val firePower = FirePower()
+    private val shadowAim = ShadowAim(mover)
+    private val mover = mover
     private var profile: GfProfile? = null
+    private var ourAvgPower = 2.0
     private var models: GunModels? = null
     private var enemyLateralDirection = 1.0
     private var lastLatSign = 1.0
@@ -82,6 +88,8 @@ internal class Aimer(
         enemy: BotState,
         enemyPrev: BotState?,
         enemyName: String?,
+        enemyHitRate: HitRate?,
+        enemyAvgPower: Double,
         field: Battlefield,
         controls: Controls,
     ) {
@@ -106,7 +114,14 @@ internal class Aimer(
         }
 
         val distance = self.distanceTo(enemy)
-        val power = selectPower(self, distance, enemy)
+        val guarded = firePower.select(self, enemy)
+        val power =
+            when {
+                guarded == FirePower.HOLD_FIRE -> Rules.MIN_BULLET_POWER
+                guarded != null -> guarded
+                else -> (POWER_DISTANCE_SCALE / distance).coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
+            }
+        val holdFire = guarded == FirePower.HOLD_FIRE
         val directAngleRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
         val lateralVelocity = enemy.velocity * sin(enemy.headingRadians - directAngleRadians)
         if (abs(lateralVelocity) > LATERAL_EPSILON) {
@@ -119,8 +134,28 @@ internal class Aimer(
         }
         dirChangeTicks++
 
-        val aimGf = pickGuessFactor(self, enemy, enemyPrev, power, directAngleRadians, field, time)
+        val pick = pickGun(self, enemy, enemyPrev, power, directAngleRadians, field, time)
         val maxEscapeAngleRadians = asin(Rules.MAX_VELOCITY / Rules.getBulletSpeed(power))
+        var aimGf = pick.gf
+        if (pick.model != null && robot.gunHeat <= PRE_FIRE_TICKS * robot.gunCoolingRate) {
+            aimGf =
+                shadowAim.pickGuessFactor(
+                    self,
+                    power,
+                    pick.gf,
+                    directAngleRadians,
+                    maxEscapeAngleRadians,
+                    enemyLateralDirection,
+                    pick.neighbors,
+                    pick.model,
+                    mover.surfWaves(self, time),
+                    ourHitEstimate(),
+                    theirHitEstimate(enemyHitRate),
+                    ourAvgPower,
+                    enemyAvgPower,
+                    time,
+                )
+        }
         val aimRadians = directAngleRadians + aimGf * maxEscapeAngleRadians * enemyLateralDirection
         val gunTurnRadians = Angles.normalizeRelative(aimRadians - robot.gunHeadingRadians)
         controls.gunTurnRadians = gunTurnRadians
@@ -128,10 +163,11 @@ internal class Aimer(
         // Fire only when the gun is aligned well enough that the shot can connect:
         // the enemy robot square subtends atan(18 / distance) to each side.
         val aligned = abs(gunTurnRadians) <= atan2(Battlefield.ROBOT_HALF_SIZE, distance)
-        val fired = robot.gunHeat == 0.0 && aligned && self.energy > power + ENERGY_RESERVE
+        val fired = robot.gunHeat == 0.0 && aligned && !holdFire && self.energy > power + ENERGY_RESERVE
         if (fired) {
             controls.firePower = power
             lastFireTime = time
+            ourAvgPower = ourAvgPower * OUR_POWER_DECAY + power * (1.0 - OUR_POWER_DECAY)
         }
 
         // This tick's outgoing wave: real if we fired, virtual otherwise. The
@@ -142,7 +178,13 @@ internal class Aimer(
         aimWaves.add(AimWaves.Entry(wave, features))
     }
 
-    private fun pickGuessFactor(
+    private class GunPick(
+        val gf: Double,
+        val neighbors: List<KnnModel.Neighbor>,
+        val model: KnnModel?,
+    )
+
+    private fun pickGun(
         self: BotState,
         enemy: BotState,
         enemyPrev: BotState?,
@@ -150,18 +192,26 @@ internal class Aimer(
         directAngleRadians: Double,
         field: Battlefield,
         time: Long,
-    ): Double {
-        val currentModels = models ?: return profile?.bestGuessFactor() ?: 0.0
+    ): GunPick {
+        val currentModels = models ?: return GunPick(profile?.bestGuessFactor() ?: 0.0, emptyList(), null)
         val queryWave = Wave(self.x, self.y, power, time + 1, directAngleRadians, enemyLateralDirection, false)
         val queryFeatures =
             Features.compute(self, enemy, enemyPrev, queryWave, field, virtuality(false, time), dirChangeTicks)
         val antiSurfer = hitRate.overlaps(0.0, ANTI_SURFER_MAX_HIT_RATE)
         val model = if (antiSurfer) currentModels.antiSurfer else currentModels.main
         return if (model.size >= MIN_KNN_DATA) {
-            model.aimGuessFactor(queryFeatures, includeDidHit = !antiSurfer)
+            val neighbors = model.nearest(queryFeatures, includeDidHit = !antiSurfer)
+            GunPick(model.peakOf(neighbors), neighbors, model)
         } else {
-            profile?.bestGuessFactor() ?: 0.0
+            GunPick(profile?.bestGuessFactor() ?: 0.0, emptyList(), null)
         }
+    }
+
+    private fun ourHitEstimate(): Double = (hitRate.hits + 1.0) / (hitRate.shots + 12.0)
+
+    private fun theirHitEstimate(enemyHitRate: HitRate?): Double {
+        if (enemyHitRate == null || enemyHitRate.shots == 0) return 0.0
+        return kotlin.math.min(0.15, (enemyHitRate.hits + 1.0) / (enemyHitRate.shots + 2.0))
     }
 
     private fun virtuality(
@@ -176,20 +226,6 @@ internal class Aimer(
 
     private fun wasRecentHit(time: Long): Boolean = hitTimes.any { abs(it - time) <= DID_HIT_WINDOW }
 
-    private fun selectPower(
-        self: BotState,
-        distance: Double,
-        enemy: BotState,
-    ): Double {
-        var power = (POWER_DISTANCE_SCALE / distance).coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
-        if (self.energy < LOW_ENERGY) power = Rules.MIN_BULLET_POWER
-        // Kill shot: no point spending more energy than the damage that ends it.
-        if (enemy.energy <= Rules.getBulletDamage(power)) {
-            power = (enemy.energy / 4.0).coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
-        }
-        return power
-    }
-
     private class GunModels(
         val main: KnnModel,
         val antiSurfer: KnnModel,
@@ -197,7 +233,6 @@ internal class Aimer(
 
     private companion object {
         const val POWER_DISTANCE_SCALE = 800.0
-        const val LOW_ENERGY = 2.0
         const val ENERGY_RESERVE = 0.05
         const val LATERAL_EPSILON = 1e-3
         const val ANTI_SURFER_MAX_HIT_RATE = 0.12
@@ -206,6 +241,8 @@ internal class Aimer(
         const val POINT_HALF_WIDTH = 0.05
         const val DID_HIT_WINDOW = 3
         const val HIT_TIME_WINDOW = 50
+        const val PRE_FIRE_TICKS = 2.0
+        const val OUR_POWER_DECAY = 0.9
 
         /** Per-enemy movement profiles and KNN trees; survive round rebuilds. */
         val PROFILE_REGISTRY = HashMap<String, GfProfile>()

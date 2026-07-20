@@ -4,3 +4,4 @@ rootProject.name = "mechgarden"
 include("bots:fencer")
 include("bots:ronin")
 include("bots:mirage")
+include("bots:proteus")

@@ -16,6 +16,9 @@ Active robot modules:
   `zen.ronin.*`.
 - **`zen.Mirage`** (`bots/mirage`) — third-generation defensive, movement-first
   1v1 wave-surfer. Implementation in `zen.mirage.*`.
+- **`zen.Proteus`** (`bots/proteus`) — adaptive 1v1 robot built to approach and
+  eventually surpass BeepBoop with original code. Implementation in
+  `zen.proteus.*`.
 
 Each module has its own `bots/<name>/AGENTS.md` with robot-specific rules. That
 file applies to work inside its directory and takes precedence over this one
@@ -46,6 +49,7 @@ Use `just refs ...` to download, deploy, list, or index reference robots from
 - `bots/fencer` — Fencer robot module (`bots/fencer/AGENTS.md`).
 - `bots/ronin` — Ronin robot module (`bots/ronin/AGENTS.md`, `bots/ronin/docs/`).
 - `bots/mirage` — Mirage robot module (`bots/mirage/AGENTS.md`, `bots/mirage/docs/`).
+- `bots/proteus` — Proteus robot module (`bots/proteus/AGENTS.md`, `bots/proteus/docs/`).
 - `scripts/` — engine, reference-robot, duel, and UI launch tools.
 - `robocode/source/` — the engine's Robocode source tree (installed alongside
   the engine; a local artifact, not in Git). Read it here instead of

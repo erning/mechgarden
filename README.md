@@ -9,6 +9,19 @@ module; robot implementations do not import from one another.
 
 ## Robots
 
+### zen.Proteus (`bots/proteus`)
+
+Adaptive 1v1 robot in early development, built to approach and eventually
+surpass BeepBoop with original code (design context:
+`docs/beepboop-analysis.md`).
+
+Proteus pairs an uncertainty-aware state core (enemy fire detection, hit-rate
+confidence intervals) with a per-tick command-frame pipeline; milestones add
+wave surfing generalized to path search, KNN targeting with offline-learned
+embeddings, a gated danger-model ensemble, active bullet shadowing, and
+expected-score firepower. See `bots/proteus/docs/architecture.md` and
+`bots/proteus/docs/roadmap.md`.
+
 ### zen.Mirage (`bots/mirage`)
 
 Third-generation defensive, movement-first 1v1 wave-surfer.
@@ -113,6 +126,7 @@ just refs list --all --query shadow
 bots/
   fencer/                 zen.Fencer robot module
   mirage/                 zen.Mirage robot module
+  proteus/                zen.Proteus robot module
   ronin/                  zen.Ronin robot module
 docs/                     Shared Robocode and technique references
 scripts/                  Engine, duel, reference-robot, and UI tools
@@ -157,6 +171,10 @@ Shared references:
 
 Robot-specific docs:
 
+- [`bots/proteus/docs/architecture.md`](bots/proteus/docs/architecture.md) -
+  Proteus target architecture.
+- [`bots/proteus/docs/roadmap.md`](bots/proteus/docs/roadmap.md) - Proteus
+  milestone plan.
 - [`bots/mirage/docs/radar.md`](bots/mirage/docs/radar.md) - Mirage radar.
 - [`bots/mirage/docs/tuning.md`](bots/mirage/docs/tuning.md) - Mirage
   diagnostics and tuning overrides.

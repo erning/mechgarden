@@ -6,13 +6,20 @@ import kotlin.math.abs
  * Our outgoing waves (real and virtual), used to learn the enemy's movement
  * profile in guess-factor space. Virtual waves carry no bullet: every tick's
  * wave still samples the enemy's covered GF interval when it passes them, so
- * the profile learns from far more than our ~30 bullets per round.
+ * the profile learns from far more than our ~30 bullets per round. Each entry
+ * keeps the feature vector captured at wave creation for the KNN guns.
  */
 internal class AimWaves {
-    private val active = ArrayList<Wave>()
+    /** An outgoing wave plus the feature vector captured at its creation. */
+    class Entry(
+        val wave: Wave,
+        val features: DoubleArray,
+    )
 
-    fun add(wave: Wave) {
-        active.add(wave)
+    private val active = ArrayList<Entry>()
+
+    fun add(entry: Entry) {
+        active.add(entry)
     }
 
     fun clear() {
@@ -21,25 +28,26 @@ internal class AimWaves {
 
     /**
      * Advances all waves through the bullet phase of [time] against the enemy
-     * square at (enemyX, enemyY). Returns waves that finished passing, each
-     * holding the enemy's covered GF interval.
+     * square at (enemyX, enemyY). Returns entries whose waves finished passing,
+     * each holding the enemy's covered GF interval.
      */
     fun update(
         enemyX: Double,
         enemyY: Double,
         time: Long,
-    ): List<Wave> {
-        val passed = ArrayList<Wave>()
+    ): List<Entry> {
+        val passed = ArrayList<Entry>()
         val iterator = active.iterator()
         while (iterator.hasNext()) {
-            val wave = iterator.next()
+            val entry = iterator.next()
+            val wave = entry.wave
             val r1 = wave.radius(time)
             val interval = wave.intersection(enemyX, enemyY, r1 - wave.speed, r1)
             if (interval != null) {
                 wave.recordVisit(interval[0], interval[1])
             } else if (r1 > wave.distanceTo(enemyX, enemyY) + PASS_MARGIN) {
                 iterator.remove()
-                if (wave.hasVisitInterval) passed.add(wave)
+                if (wave.hasVisitInterval) passed.add(entry)
             }
         }
         return passed
@@ -51,14 +59,15 @@ internal class AimWaves {
         y: Double,
         power: Double,
         time: Long,
-    ): Wave? {
-        var best: Wave? = null
+    ): Entry? {
+        var best: Entry? = null
         var bestDiff = Double.POSITIVE_INFINITY
-        for (wave in active) {
+        for (entry in active) {
+            val wave = entry.wave
             if (!wave.bulletFired || abs(wave.power - power) > POWER_TOLERANCE) continue
             val diff = abs(wave.distanceTo(x, y) - wave.radius(time))
             if (diff < wave.speed + MATCH_SLACK && diff < bestDiff) {
-                best = wave
+                best = entry
                 bestDiff = diff
             }
         }

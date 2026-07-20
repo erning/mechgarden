@@ -88,7 +88,7 @@ abstract class Proteus : AdvancedRobot() {
         val enemy = gameState.enemy
         mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, field, time, controls)
         if (scan != null && enemy != null) {
-            aimer.aim(self, enemy, gameState.enemyName, field, controls)
+            aimer.aim(self, enemy, gameState.enemyAt(time - 1), gameState.enemyName, field, controls)
         }
         val bullet = controls.apply()
         if (bullet != null) {

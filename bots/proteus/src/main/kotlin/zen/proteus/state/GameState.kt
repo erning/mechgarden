@@ -78,6 +78,8 @@ internal class GameState {
 
     fun selfAt(time: Long): BotState? = selfHistory.lastOrNull { it.time == time }
 
+    fun enemyAt(time: Long): BotState? = enemyHistory.lastOrNull { it.time == time }
+
     fun onScan(
         scan: ScannedRobotEvent,
         gunCoolingRate: Double,

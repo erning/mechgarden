@@ -46,7 +46,7 @@ class SurferTest {
         // keeps hitting +0.8 the surfer keeps going east.
         val danger = EmpiricalDanger()
         repeat(8) { danger.recordHit(0.8) }
-        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), danger, 1.0, 100)
+        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), danger, emptyMap(), 1.0, 100)
         assertEquals(Surfer.Option.FORWARD, choice.option)
     }
 
@@ -54,13 +54,13 @@ class SurferTest {
     fun `surfer flips when the enemy hits the other side`() {
         val danger = EmpiricalDanger()
         repeat(8) { danger.recordHit(-0.8) }
-        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), danger, 1.0, 100)
+        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), danger, emptyMap(), 1.0, 100)
         assertEquals(Surfer.Option.BACKWARD, choice.option)
     }
 
     @Test
     fun `empty danger keeps the current direction`() {
-        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), EmpiricalDanger(), 1.0, 100)
+        val choice = surfer.choose(self, enemy, listOf(waveAt(1.0)), EmpiricalDanger(), emptyMap(), 1.0, 100)
         assertEquals(Surfer.Option.FORWARD, choice.option)
     }
 }

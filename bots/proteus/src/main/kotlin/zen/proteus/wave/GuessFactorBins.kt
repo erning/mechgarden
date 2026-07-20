@@ -9,7 +9,7 @@ internal object GuessFactorBins {
     const val COUNT = 151
     const val MAX_GF = 1.0
 
-    private const val KERNEL_LAMBDA = 3.0
+    private const val KERNEL_LAMBDA = 6.0
     private val KERNEL_RADIUS = (KERNEL_LAMBDA * 3).toInt()
 
     fun index(guessFactor: Double): Int =

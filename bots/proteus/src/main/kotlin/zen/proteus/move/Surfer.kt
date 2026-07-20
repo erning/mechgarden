@@ -32,6 +32,7 @@ internal class Surfer(
         enemy: BotState,
         waves: List<Wave>,
         danger: EmpiricalDanger,
+        shadows: Map<Wave, List<DoubleArray>>,
         orbitDirection: Double,
         time: Long,
     ): Choice {
@@ -39,7 +40,7 @@ internal class Surfer(
         var bestScore = Double.POSITIVE_INFINITY
         for (option in Option.entries) {
             val direction = if (option == Option.BACKWARD) -orbitDirection else orbitDirection
-            val score = simulate(self, enemy, waves, danger, option, direction, time)
+            val score = simulate(self, enemy, waves, danger, shadows, option, direction, time)
             // Prefer keeping the current orbit direction on near-ties (stability).
             val biased = score + if (option == Option.FORWARD) 0.0 else TIE_EPSILON
             if (biased < bestScore) {
@@ -55,6 +56,7 @@ internal class Surfer(
         enemy: BotState,
         waves: List<Wave>,
         danger: EmpiricalDanger,
+        shadows: Map<Wave, List<DoubleArray>>,
         option: Option,
         orbitDirection: Double,
         time: Long,
@@ -90,7 +92,7 @@ internal class Surfer(
             // Orbit the live enemy position (not the stale wave origin) with a
             // damped distance bias, so surfing holds range without twisting the
             // escape geometry.
-            val biasRadians = dampedBiasRadians(state.distanceTo(enemy))
+            val biasRadians = DistanceBand.dampedBiasRadians(state.distanceTo(enemy))
             val tangentRadians =
                 Angles.absoluteBearingRadians(state.x, state.y, enemy.x, enemy.y) +
                     orbitDirection * (PI / 2.0 + biasRadians)
@@ -104,7 +106,7 @@ internal class Surfer(
                 val weight =
                     (WAVE_WEIGHT_BASE + wave.power) /
                         sqrt(4.0 + max(1.0, wave.ticksUntilArrival(wave.distanceTo(self.x, self.y), time)))
-                score += weight * danger.danger(coveredLo[i], coveredHi[i])
+                score += weight * danger.danger(coveredLo[i], coveredHi[i], shadows[wave])
             }
         }
         return score
@@ -117,9 +119,5 @@ internal class Surfer(
         const val WAVE_PASS_MARGIN = 26.0
         const val WAVE_WEIGHT_BASE = 0.2
         const val TIE_EPSILON = 1e-9
-        const val SURF_BIAS_SCALE = 0.5
-
-        /** Distance bias used while surfing: same band logic, damped. */
-        fun dampedBiasRadians(distance: Double): Double = SURF_BIAS_SCALE * DistanceBand.biasRadians(distance)
     }
 }

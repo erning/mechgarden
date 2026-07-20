@@ -90,7 +90,17 @@ abstract class Proteus : AdvancedRobot() {
         if (scan != null && enemy != null) {
             aimer.aim(self, enemy, gameState.enemyName, field, controls)
         }
-        controls.apply()
+        val bullet = controls.apply()
+        if (bullet != null) {
+            mover.onOurBullet(
+                bullet.x,
+                bullet.y,
+                bullet.headingRadians,
+                bullet.velocity,
+                bullet.power,
+                time + 1,
+            )
+        }
     }
 
     override fun onScannedRobot(event: ScannedRobotEvent) {
@@ -100,10 +110,12 @@ abstract class Proteus : AdvancedRobot() {
     override fun onBulletHit(event: BulletHitEvent) {
         aimer.onBulletHit(event.bullet.x, event.bullet.y, event.bullet.power, event.time)
         gameState.noteOurBulletHit(event.bullet.power)
+        mover.onOurBulletEnd(event.bullet.x, event.bullet.y, event.time)
     }
 
     override fun onBulletMissed(event: BulletMissedEvent) {
         aimer.onBulletMissed()
+        mover.onOurBulletEnd(event.bullet.x, event.bullet.y, event.time)
     }
 
     override fun onHitByBullet(event: HitByBulletEvent) {
@@ -121,6 +133,7 @@ abstract class Proteus : AdvancedRobot() {
                 event.time,
             ),
         )
+        mover.onOurBulletEnd(event.bullet.x, event.bullet.y, event.time)
     }
 
     override fun onHitRobot(event: robocode.HitRobotEvent) {

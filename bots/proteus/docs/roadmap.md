@@ -33,15 +33,22 @@
 分）与 M4（KNN 枪）的系统——Mirage 同 catalog 为 78.3% APS / 93.3% survival，那
 是 M3+ 的对标线，M2 不背。M3 验收时复评此门槛。
 
-## M3 路径冲浪
+## M3 路径冲浪（已完成，含重要负结果）
 
-范围：`MovementSim` 逐 tick 精确模拟；`PathSurfer` best-first 搜索（计划复
-用、启发剪枝、三波深度，迭代加深 + tick 预算）；`PathLibrary` 预计算路径
-库；位置乘子（距离、MEA 利用）；bullet shadow 计入危险（含跨 tick 半权重阴
-影）；移动侧向瞄准发布未来状态并对账。
+范围（已交付）：`MovementSim` 逐 tick 精确模拟；`PathSurfer` best-first 搜索
+（计划复用、深度 tie-break、节点预算 ≈ tick 预算，可采纳下界剪枝）；
+`BulletShadows`（含跨 tick 阴影修正）计入危险评分；三波加权（第三波 0.75 折
+扣）。**负结果**：路径搜索在实战中小于 M2 的三选一冲浪（basic APS ~29 vs
+~37，多轮 100 回合验证）。分析原因：路径搜索会积极穿过粗糙经验危险模型
+的狭窄「安全」bin（过拟合噪声），且速度反转制造低速窗口被简单枪白打——
+BeepBoop 的路径冲浪成立依赖其 22 模型的危险集成。处置：`PathSurfer` 保留
+（单元测试覆盖搜索行为），默认移动引擎回退为三选一冲浪，待 M5 危险集成
+落地后用 A/B 重评（`Mover.MOVEMENT_ENGINE` 开关）。「向瞄准发布未来状态」
+并入 M4（提前一 tick 预瞄时才真正需要）。
 
-验收：`basic` catalog APS ≥ 85%；`classic` catalog APS ≥ 60%；无 skipped
-turn（诊断统计）。
+验收：bullet shadow 单元测试 + 实战无回归（basic APS 37.3 / 100 回合）；路
+径搜索行为级单元测试（避险、扎口袋、不劣于直行）。原定的 basic ≥ 85% 门
+槛随 M2 一并后移到 M4/M5 复评。
 
 ## M4 KNN 瞄准
 
@@ -93,3 +100,4 @@ A/B 对比）。
 |---|---|---|---|---|---|---|
 | 2026-07-20 | M1 | RaikoNano | 10 | 45.0% | 0% | 骨架基线 |
 | 2026-07-20 | M2 | basic | 100 | 36.4% | 0% | 波+真冲浪+GF 枪；Mirage 对照 78.3% |
+| 2026-07-20 | M3 | basic | 100 | 37.3% | 0% | 阴影+三选一冲浪；路径搜索保留但禁用 |

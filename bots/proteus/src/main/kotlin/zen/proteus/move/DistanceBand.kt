@@ -10,6 +10,7 @@ internal object DistanceBand {
     const val PREFERRED_MAX = 400.0
     val APPROACH_RADIANS = PI / 5.0
     val RETREAT_RADIANS = PI / 4.0
+    const val SURF_BIAS_SCALE = 0.5
 
     /**
      * Heading bias added to the perpendicular. With headings measured relative
@@ -22,4 +23,7 @@ internal object DistanceBand {
             distance < PREFERRED_MIN -> RETREAT_RADIANS
             else -> 0.0
         }
+
+    /** Damped bias used while surfing: holds range without twisting escape geometry. */
+    fun dampedBiasRadians(distance: Double): Double = SURF_BIAS_SCALE * biasRadians(distance)
 }

@@ -45,9 +45,11 @@
 | `wave.AimWaves` | 瞄准用波注册（每 tick 虚拟波 + 实弹波） | M2 |
 | `wave.GuessFactorBins` | 151 bin 密度：区间覆盖、指数核平滑 | M2 |
 | `wave.WaveFeatures` | 建波时的原始特征池（瞄准/移动共用） | M4 |
-| `move.PathSurfer` | 路径空间 best-first 搜索（计划复用、启发剪枝、三波深度） | M3 |
-| `move.PathLibrary` | 启动期预计算的 goto 路径库，按（末速、距离）索引 | M3 |
-| `move.MovementSim` | 候选路径逐 tick 精确模拟（墙、敌人外推、未来枪热波） | M3 |
+| `move.Surfer` | 三选一真冲浪（前进/后退/停车，全程模拟取最低危险） | M2 |
+| `move.PathSurfer` | 路径空间 best-first 搜索（计划复用、节点预算）；已建但默认禁用，见 §6.1 | M3 |
+| `move.MovementSim` | 候选移动逐 tick 精确模拟（墙、加减速、碰撞） | M2 |
+| `move.OurBullets` / `wave.BulletShadows` | 我方在飞子弹解析追踪；波环阴影 GF 区间计算 | M3 |
+| `move.danger.EmpiricalDanger` | 命中 + 访问的经验危险（recency 衰减、阴影折减） | M2 |
 | `move.danger.*` | 危险模型集成：模拟枪（HOT/线性/圆形等）、KNN 危险模型、flattener、PM 模拟器；门控 + 动态权重 | M5 |
 | `knn.*` | 自研 KD 树、可学习嵌入、KNN 模型基类 | M4 |
 | `aim.guns.*` | KNN 枪定义（主枪 / 反冲浪枪）、密度峰扫描线选点 | M4 |
@@ -112,12 +114,13 @@ Proteus 用 `Controls` 把纪律变成结构：
 
 - M2 先建波体系：敌方开火建波，精确交集求「本 tick 会被击中的 GF 区间」，访
   问统计做经验危险，真冲浪（前进/后退/停车三选一）。
-- M3 推广为路径冲浪：方向序列（+1/0/−1）上的 best-first 搜索。三个关键机制：
-  **计划复用**（上一 tick 最优计划的延展给大幅排序偏置）、**启发剪枝**（各波
-  最小可达危险作下界）、**预计算路径库**（启动期枚举合法路径建索引，把 goto
-  规划变查表）。评分 = 波危险 × 位置乘子（距离偏好、MEA 利用）。
-- 与 BeepBoop 的差异：搜索用**显式 tick 预算的迭代加深**而非固定深度——超时
-  就执行当前最优，从机制上避免 skipped turn；这是我们的工程改进点之一。
+- M3 实现了路径冲浪（方向序列上的 best-first 搜索、计划复用、节点预算）与
+  bullet shadow（含跨 tick 修正）。**实测负结果**：路径搜索在粗糙经验危险下
+  输给了三选一冲浪——它把噪声当信号，专挑模型里的窄缝穿，还制造低速窗口。
+  结论：搜索机械保留（`PathSurfer`，行为级单测），默认引擎用三选一，M5 危
+  险集成落地后 A/B 重评。阴影则确认有效并常驻（`BulletShadows`）。
+- 与 BeepBoop 的差异：搜索用节点预算代替固定深度，天然免疫 skipped turn；
+  这一机制保留在 `PathSurfer` 中备用。
 
 ### 6.2 危险评估：门控 + 动态权重集成（M5）
 

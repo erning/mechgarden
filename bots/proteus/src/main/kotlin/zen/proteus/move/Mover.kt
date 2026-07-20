@@ -77,6 +77,16 @@ internal class Mover {
     /** Whether any enemy wave is in flight (strategy input). */
     fun hasActiveWaves(): Boolean = waves.isActive
 
+    /** Clears in-flight waves (used when shield mode ends, waves went stale). */
+    fun clearWaves() {
+        waves.clear()
+    }
+
+    /** Resets the estimator's enemy hit-rate stats (shield mode distorted them). */
+    fun resetHitStats() {
+        estimator?.enemyHitRate?.reset()
+    }
+
     /** Active enemy waves nearest to reaching us, for shadow-aware aiming. */
     fun surfWaves(
         self: BotState,

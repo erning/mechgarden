@@ -12,6 +12,7 @@ import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
 import zen.proteus.move.Mover
 import zen.proteus.radar.Radar
+import zen.proteus.shield.Shielder
 import zen.proteus.state.GameState
 import zen.proteus.strategy.Strategy
 import java.awt.Color
@@ -37,6 +38,7 @@ abstract class Proteus : AdvancedRobot() {
     private val radar = Radar(this)
     private val mover = Mover()
     private val aimer = Aimer(this, mover)
+    private val shielder = Shielder(this)
     private val strategy = Strategy()
     private lateinit var field: Battlefield
 
@@ -61,6 +63,7 @@ abstract class Proteus : AdvancedRobot() {
         radar.onRoundStart()
         mover.onRoundStart()
         aimer.onRoundStart()
+        shielder.onRoundStart()
         strategy.onRoundStart(roundNum)
         while (true) {
             tick()
@@ -71,9 +74,12 @@ abstract class Proteus : AdvancedRobot() {
     private fun tick() {
         gameState.onStatus(time, x, y, headingRadians, velocity, energy, gunHeat)
         for (end in pendingEnemyBulletEnds) {
-            val guessFactor = mover.onEnemyBulletAt(end.x, end.y, end.power, end.time, end.hitUs)
-            if (end.hitUs && guessFactor != null) {
-                strategy.noteHitOnUs(guessFactor, roundNum)
+            shielder.onBulletEnded(end.x, end.y, end.power, end.time, end.hitUs)
+            if (!shielder.active) {
+                val guessFactor = mover.onEnemyBulletAt(end.x, end.y, end.power, end.time, end.hitUs)
+                if (end.hitUs && guessFactor != null) {
+                    strategy.noteHitOnUs(guessFactor, roundNum)
+                }
             }
         }
         pendingEnemyBulletEnds.clear()
@@ -85,7 +91,10 @@ abstract class Proteus : AdvancedRobot() {
             gameState.onScan(scan, gunCoolingRate)
             radar.onScan(Angles.normalizeAbsolute(headingRadians + scan.bearingRadians), controls)
             for (shot in gameState.consumeEnemyShots()) {
-                mover.onEnemyShot(shot, field)
+                shielder.onEnemyShot(shot, time)
+                if (!shielder.active) {
+                    mover.onEnemyShot(shot, field)
+                }
             }
         } else {
             radar.search(controls)
@@ -102,19 +111,29 @@ abstract class Proteus : AdvancedRobot() {
                 ticksSinceEnemyShot = time - gameState.lastEnemyShotTime,
             )
         }
-        mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, strategy, field, time, controls)
-        if (scan != null && enemy != null) {
-            aimer.aim(
-                self,
-                enemy,
-                gameState.enemyAt(time - 1),
-                gameState.enemyName,
-                strategy,
-                mover.enemyHitRate(),
-                mover.enemyAvgPower(),
-                field,
-                controls,
-            )
+        // Shield mode transitions reset the stats shielding would distort.
+        if (shielder.update(enemy, mover.enemyHitRate(), time) && !shielder.active) {
+            aimer.hitRate.reset()
+            mover.resetHitStats()
+            mover.clearWaves()
+        }
+        if (shielder.active) {
+            shielder.shield(self, enemy, controls)
+        } else {
+            mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, strategy, field, time, controls)
+            if (scan != null && enemy != null) {
+                aimer.aim(
+                    self,
+                    enemy,
+                    gameState.enemyAt(time - 1),
+                    gameState.enemyName,
+                    strategy,
+                    mover.enemyHitRate(),
+                    mover.enemyAvgPower(),
+                    field,
+                    controls,
+                )
+            }
         }
         val bullet = controls.apply()
         if (bullet != null) {

@@ -14,6 +14,11 @@ internal class HitRate {
     var hits = 0
         private set
 
+    fun reset() {
+        shots = 0
+        hits = 0
+    }
+
     fun record(hit: Boolean) {
         shots++
         if (hit) hits++

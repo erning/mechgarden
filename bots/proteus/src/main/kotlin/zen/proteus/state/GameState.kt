@@ -44,6 +44,10 @@ internal class GameState {
     var enemyName: String? = null
         private set
 
+    /** Time of the last detected enemy shot; Long.MIN_VALUE when none yet. */
+    var lastEnemyShotTime = Long.MIN_VALUE
+        private set
+
     private val selfHistory = ArrayDeque<BotState>()
     private val enemyHistory = ArrayDeque<BotState>()
     private val enemyShots = ArrayDeque<EnemyShot>()
@@ -59,6 +63,7 @@ internal class GameState {
         enemyShots.clear()
         ourPendingDamageToEnemy = 0.0
         collisionPendingDamage = 0.0
+        lastEnemyShotTime = Long.MIN_VALUE
     }
 
     fun onStatus(
@@ -121,6 +126,7 @@ internal class GameState {
                     ),
                 )
                 gunHeat = Rules.getGunHeat(energyDrop)
+                lastEnemyShotTime = scan.time
             }
         }
         ourPendingDamageToEnemy = 0.0

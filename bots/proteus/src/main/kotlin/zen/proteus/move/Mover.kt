@@ -9,6 +9,7 @@ import zen.proteus.move.danger.EnemyWave
 import zen.proteus.state.BotState
 import zen.proteus.state.GameState
 import zen.proteus.state.HitRate
+import zen.proteus.strategy.Strategy
 import zen.proteus.wave.BulletShadows
 import zen.proteus.wave.Wave
 import zen.proteus.wave.Waves
@@ -36,6 +37,7 @@ internal class Mover {
     private var surfer: Surfer? = null
     private var pathSurfer: PathSurfer? = null
     private var field: Battlefield? = null
+    private var currentStrategy = Strategy()
     private var orbitDirection = 1.0
     private var lastPlan: PathSurfer.Plan? = null
     private var lastLatSign = 1.0
@@ -71,6 +73,9 @@ internal class Mover {
 
     /** Rolling average of the enemy's bullet power. */
     fun enemyAvgPower(): Double = enemyAvgPower
+
+    /** Whether any enemy wave is in flight (strategy input). */
+    fun hasActiveWaves(): Boolean = waves.isActive
 
     /** Active enemy waves nearest to reaching us, for shadow-aware aiming. */
     fun surfWaves(
@@ -113,7 +118,8 @@ internal class Mover {
 
     /**
      * An enemy bullet ended mid-flight at (x, y) — it hit us or collided with
-     * one of our bullets. Match it to a wave and learn where it was aimed.
+     * one of our bullets. Match it to a wave, learn where it was aimed, and
+     * return its guess factor (null when no wave matches).
      */
     fun onEnemyBulletAt(
         x: Double,
@@ -121,9 +127,11 @@ internal class Mover {
         power: Double,
         time: Long,
         hitUs: Boolean,
-    ) {
-        val matched = waves.matchBullet(x, y, power, time) ?: return
-        estimator?.onWaveResolved(matched.entry, matched.entry.wave.guessFactor(matched.angleRadians), hitUs)
+    ): Double? {
+        val matched = waves.matchBullet(x, y, power, time) ?: return null
+        val guessFactor = matched.entry.wave.guessFactor(matched.angleRadians)
+        estimator?.onWaveResolved(matched.entry, guessFactor, hitUs)
+        return guessFactor
     }
 
     fun move(
@@ -131,6 +139,7 @@ internal class Mover {
         selfPrev: BotState?,
         enemy: BotState?,
         enemyName: String?,
+        strategy: Strategy,
         battlefield: Battlefield,
         time: Long,
         controls: Controls,
@@ -141,7 +150,9 @@ internal class Mover {
         if (surfer == null) surfer = Surfer(battlefield)
         if (pathSurfer == null) pathSurfer = PathSurfer(battlefield)
         field = battlefield
+        currentStrategy = strategy
         val currentEstimator = estimator
+        currentEstimator?.hotBias = if (strategy.antiHot) HOT_BIAS else 1.0
 
         if (enemy != null) {
             val bearingRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
@@ -160,7 +171,14 @@ internal class Mover {
         }
 
         val surfWaves = waves.surfable(self.x, self.y, time)
-        if (surfWaves.isNotEmpty() && currentEstimator != null && enemy != null) {
+        if (strategy.ram && enemy != null) {
+            // Nearly drained: finish by ramming (2x ram damage, 30% ram bonus).
+            ramDrive(self, enemy, controls)
+        } else if (strategy.antiRam && enemy != null) {
+            // Rammers cannot be surfed at their range; flee near-perpendicular
+            // at full speed while the gun works.
+            flee(self, enemy, strategy, battlefield, controls)
+        } else if (surfWaves.isNotEmpty() && currentEstimator != null && enemy != null) {
             ourBullets.prune(battlefield, time)
             val shadows = HashMap<Wave, List<DoubleArray>>(surfWaves.size)
             for (entry in surfWaves) {
@@ -201,10 +219,66 @@ internal class Mover {
         val desiredRadians =
             Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y) +
                 choice.orbitDirection * (PI / 2.0 + biasRadians)
-        val smoothedRadians =
-            field!!.smoothWall(self.x, self.y, desiredRadians, choice.orbitDirection)
+        val smoothedRadians = smooth(self.x, self.y, desiredRadians, choice.orbitDirection)
         controls.bodyTurnRadians = Angles.normalizeRelative(smoothedRadians - self.headingRadians)
         controls.ahead = if (choice.option == Surfer.Option.STOP) 0.0 else MAX_AHEAD
+    }
+
+    /** Anti-ram: flee at a near-perpendicular escape angle, shrinking as the
+     *  rammer closes in. */
+    private fun flee(
+        self: BotState,
+        enemy: BotState,
+        strategy: Strategy,
+        battlefield: Battlefield,
+        controls: Controls,
+    ) {
+        val distance = self.distanceTo(enemy)
+        val bearingToEnemyRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
+        val escapeRadians = maxOf(FLEE_MIN_ESCAPE, FLEE_BASE_ESCAPE - distance / FLEE_DISTANCE_DIVISOR)
+        val desiredRadians = bearingToEnemyRadians + orbitDirection * escapeRadians
+        val smoothedRadians = smooth(self.x, self.y, desiredRadians, orbitDirection)
+        var turnRadians = Angles.normalizeRelative(smoothedRadians - self.headingRadians)
+        var ahead = MAX_AHEAD
+        if (abs(turnRadians) > PI / 2.0) {
+            turnRadians = Angles.normalizeRelative(turnRadians - PI)
+            ahead = -MAX_AHEAD
+        }
+        controls.bodyTurnRadians = turnRadians
+        controls.ahead = ahead
+    }
+
+    /** Nearly-drained enemy: drive straight into it for the ram kill. */
+    private fun ramDrive(
+        self: BotState,
+        enemy: BotState,
+        controls: Controls,
+    ) {
+        val desiredRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
+        val smoothedRadians = smooth(self.x, self.y, desiredRadians, orbitDirection)
+        var turnRadians = Angles.normalizeRelative(smoothedRadians - self.headingRadians)
+        var ahead = MAX_AHEAD
+        if (abs(turnRadians) > PI / 2.0) {
+            turnRadians = Angles.normalizeRelative(turnRadians - PI)
+            ahead = -MAX_AHEAD
+        }
+        controls.bodyTurnRadians = turnRadians
+        controls.ahead = ahead
+    }
+
+    /** Fancy or walking-stick smoothing, per the anti-mirror flag. */
+    private fun smooth(
+        x: Double,
+        y: Double,
+        desiredRadians: Double,
+        side: Double,
+    ): Double {
+        val currentField = field!!
+        return if (currentStrategy.antiMirror) {
+            currentField.smoothWallWalking(x, y, desiredRadians, side)
+        } else {
+            currentField.smoothWall(x, y, desiredRadians, side)
+        }
     }
 
     private fun executePlan(
@@ -219,8 +293,7 @@ internal class Mover {
         val desiredRadians =
             Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y) +
                 plan.line * (PI / 2.0 + biasRadians)
-        val smoothedRadians =
-            field!!.smoothWall(self.x, self.y, desiredRadians, plan.line)
+        val smoothedRadians = smooth(self.x, self.y, desiredRadians, plan.line)
         controls.bodyTurnRadians = Angles.normalizeRelative(smoothedRadians - self.headingRadians)
         controls.ahead = option * MAX_AHEAD
     }
@@ -236,7 +309,7 @@ internal class Mover {
         val bearingToEnemyRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
         val desiredRadians =
             bearingToEnemyRadians + orbitDirection * (PI / 2.0 + DistanceBand.biasRadians(distance))
-        val smoothedRadians = field.smoothWall(self.x, self.y, desiredRadians, orbitDirection)
+        val smoothedRadians = smooth(self.x, self.y, desiredRadians, orbitDirection)
 
         var turnRadians = Angles.normalizeRelative(smoothedRadians - self.headingRadians)
         var ahead = MAX_AHEAD
@@ -251,6 +324,10 @@ internal class Mover {
     private companion object {
         const val MAX_AHEAD = 128.0
         const val POWER_DECAY = 0.9
+        const val HOT_BIAS = 2.0
+        const val FLEE_MIN_ESCAPE = 0.7
+        const val FLEE_BASE_ESCAPE = 1.5
+        const val FLEE_DISTANCE_DIVISOR = 400.0
 
         // THREE_OPTION (default): the proven three-option surfer. PATH_SEARCH:
         // best-first path surfing; it threads narrow danger peaks too eagerly

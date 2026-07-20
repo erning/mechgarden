@@ -102,3 +102,5 @@ Keep Proteus layered so early prototypes do not turn into global strategy code.
 - Verify deployability with `just deploy proteus`.
 - Validate combat changes with `just duel -r Proteus -e <enemy>` or the catalog
   named by the current milestone in `docs/roadmap.md`; record results there.
+  Use `-n 35` per battle and average several runs instead of one long battle
+  (35-round runs vary by several APS; 2-3 runs is enough for A/B calls).

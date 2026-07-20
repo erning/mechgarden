@@ -13,6 +13,7 @@ import zen.proteus.core.Battlefield
 import zen.proteus.move.Mover
 import zen.proteus.radar.Radar
 import zen.proteus.state.GameState
+import zen.proteus.strategy.Strategy
 import java.awt.Color
 
 /**
@@ -36,6 +37,7 @@ abstract class Proteus : AdvancedRobot() {
     private val radar = Radar(this)
     private val mover = Mover()
     private val aimer = Aimer(this, mover)
+    private val strategy = Strategy()
     private lateinit var field: Battlefield
 
     private var pendingScan: ScannedRobotEvent? = null
@@ -59,6 +61,7 @@ abstract class Proteus : AdvancedRobot() {
         radar.onRoundStart()
         mover.onRoundStart()
         aimer.onRoundStart()
+        strategy.onRoundStart(roundNum)
         while (true) {
             tick()
             execute()
@@ -68,7 +71,10 @@ abstract class Proteus : AdvancedRobot() {
     private fun tick() {
         gameState.onStatus(time, x, y, headingRadians, velocity, energy, gunHeat)
         for (end in pendingEnemyBulletEnds) {
-            mover.onEnemyBulletAt(end.x, end.y, end.power, end.time, end.hitUs)
+            val guessFactor = mover.onEnemyBulletAt(end.x, end.y, end.power, end.time, end.hitUs)
+            if (end.hitUs && guessFactor != null) {
+                strategy.noteHitOnUs(guessFactor, roundNum)
+            }
         }
         pendingEnemyBulletEnds.clear()
 
@@ -87,13 +93,23 @@ abstract class Proteus : AdvancedRobot() {
 
         val self = gameState.self!!
         val enemy = gameState.enemy
-        mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, field, time, controls)
+        if (enemy != null) {
+            strategy.strategize(
+                self,
+                enemy,
+                field,
+                noIncomingWaves = !mover.hasActiveWaves(),
+                ticksSinceEnemyShot = time - gameState.lastEnemyShotTime,
+            )
+        }
+        mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, strategy, field, time, controls)
         if (scan != null && enemy != null) {
             aimer.aim(
                 self,
                 enemy,
                 gameState.enemyAt(time - 1),
                 gameState.enemyName,
+                strategy,
                 mover.enemyHitRate(),
                 mover.enemyAvgPower(),
                 field,

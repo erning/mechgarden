@@ -54,11 +54,45 @@ internal class Battlefield(
             endY <= height - WALL_MARGIN
     }
 
+    /**
+     * Walking-stick smoothing (looser than [smoothWall]): a shorter stick and a
+     * wider margin, so our motion near walls stays simple and monotone — used
+     * against mirror bots, whose prediction of us should keep working.
+     */
+    fun smoothWallWalking(
+        x: Double,
+        y: Double,
+        desiredRadians: Double,
+        preferredSide: Double,
+    ): Double {
+        fun fits(angleRadians: Double): Boolean {
+            val endX = x + sin(angleRadians) * WALKING_STICK_LENGTH
+            val endY = y + cos(angleRadians) * WALKING_STICK_LENGTH
+            return endX >= WALKING_STICK_MARGIN &&
+                endX <= width - WALKING_STICK_MARGIN &&
+                endY >= WALKING_STICK_MARGIN &&
+                endY <= height - WALKING_STICK_MARGIN
+        }
+        if (fits(desiredRadians)) return desiredRadians
+        val first = if (preferredSide >= 0.0) 1.0 else -1.0
+        for (i in 1..MAX_SMOOTH_STEPS) {
+            val preferred = desiredRadians + first * i * WALKING_STEP_RADIANS
+            if (fits(preferred)) return preferred
+            val alternate = desiredRadians - first * i * WALKING_STEP_RADIANS
+            if (fits(alternate)) return alternate
+        }
+        return desiredRadians
+    }
+
     companion object {
         const val ROBOT_HALF_SIZE = 18.0
         const val WALL_MARGIN = ROBOT_HALF_SIZE + 2.0
         const val STICK_LENGTH = 160.0
         val SMOOTH_STEP_RADIANS: Double = Math.toRadians(5.0)
         const val MAX_SMOOTH_STEPS = 36
+
+        const val WALKING_STICK_LENGTH = 150.0
+        const val WALKING_STICK_MARGIN = 25.0
+        val WALKING_STEP_RADIANS: Double = Math.toRadians(11.25)
     }
 }

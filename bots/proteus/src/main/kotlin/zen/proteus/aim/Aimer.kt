@@ -9,6 +9,7 @@ import zen.proteus.knn.KnnModel
 import zen.proteus.move.Mover
 import zen.proteus.state.BotState
 import zen.proteus.state.HitRate
+import zen.proteus.strategy.Strategy
 import zen.proteus.wave.AimWaves
 import zen.proteus.wave.Wave
 import kotlin.math.abs
@@ -88,6 +89,7 @@ internal class Aimer(
         enemy: BotState,
         enemyPrev: BotState?,
         enemyName: String?,
+        strategy: Strategy,
         enemyHitRate: HitRate?,
         enemyAvgPower: Double,
         field: Battlefield,
@@ -117,11 +119,17 @@ internal class Aimer(
         val guarded = firePower.select(self, enemy)
         val power =
             when {
+                strategy.tryToDisable && enemy.energy <= Rules.getBulletDamage(Rules.MAX_BULLET_POWER) ->
+                    ((enemy.energy - DISABLE_REMAINDER) / 4.0).coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
                 guarded == FirePower.HOLD_FIRE -> Rules.MIN_BULLET_POWER
                 guarded != null -> guarded
                 else -> (POWER_DISTANCE_SCALE / distance).coerceIn(Rules.MIN_BULLET_POWER, Rules.MAX_BULLET_POWER)
             }
-        val holdFire = guarded == FirePower.HOLD_FIRE
+        // Ramming pays better than a bullet kill; stop shooting entirely.
+        val holdFire =
+            strategy.ram ||
+                guarded == FirePower.HOLD_FIRE ||
+                (strategy.tryToDisable && enemy.energy < DISABLE_SHOT_MIN_ENERGY)
         val directAngleRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
         val lateralVelocity = enemy.velocity * sin(enemy.headingRadians - directAngleRadians)
         if (abs(lateralVelocity) > LATERAL_EPSILON) {
@@ -243,6 +251,8 @@ internal class Aimer(
         const val HIT_TIME_WINDOW = 50
         const val PRE_FIRE_TICKS = 2.0
         const val OUR_POWER_DECAY = 0.9
+        const val DISABLE_REMAINDER = 0.011
+        const val DISABLE_SHOT_MIN_ENERGY = 0.5
 
         /** Per-enemy movement profiles and KNN trees; survive round rebuilds. */
         val PROFILE_REGISTRY = HashMap<String, GfProfile>()

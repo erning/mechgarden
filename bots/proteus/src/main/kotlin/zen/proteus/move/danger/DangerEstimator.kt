@@ -41,6 +41,10 @@ internal class DangerEstimator {
     /** Enemy realized hit rate against us (waves resolved vs connected). */
     val enemyHitRate = HitRate()
 
+    /** > 1 while the enemy still looks like a head-on gun: forces the HOT model
+     *  active and multiplies its weight (see strategy.Strategy). */
+    var hotBias = 1.0
+
     private val scores = HashMap<DangerModel, Double>()
 
     /** Combined danger mass over [gfLo, gfHi] for [wave] evaluated at (evalX, evalY). */
@@ -55,9 +59,10 @@ internal class DangerEstimator {
         var weighted = 0.0
         var weightSum = 0.0
         for (model in models) {
-            if (!enemyHitRate.overlaps(model.minHitRate, model.maxHitRate)) continue
+            val forcedHot = model is HotModel && hotBias > 1.0
+            if (!forcedHot && !enemyHitRate.overlaps(model.minHitRate, model.maxHitRate)) continue
             val bins = model.binsFor(wave, evalX, evalY) ?: continue
-            val weight = weightOf(model)
+            val weight = weightOf(model) * (if (forcedHot) hotBias else 1.0)
             if (weight <= 0.0) continue
             weighted += weight * normalizedMass(bins, gfLo, gfHi)
             weightSum += weight
@@ -71,9 +76,10 @@ internal class DangerEstimator {
                     var shadowed = 0.0
                     var shadowWeight = 0.0
                     for (model in models) {
-                        if (!enemyHitRate.overlaps(model.minHitRate, model.maxHitRate)) continue
+                        val forcedHot = model is HotModel && hotBias > 1.0
+                        if (!forcedHot && !enemyHitRate.overlaps(model.minHitRate, model.maxHitRate)) continue
                         val bins = model.binsFor(wave, evalX, evalY) ?: continue
-                        val weight = weightOf(model)
+                        val weight = weightOf(model) * (if (forcedHot) hotBias else 1.0)
                         if (weight <= 0.0) continue
                         shadowed += weight * normalizedMass(bins, overlapLo, overlapHi)
                         shadowWeight += weight

@@ -32,6 +32,9 @@ internal class GameState {
         val originY: Double,
         val directAngleRadians: Double,
         val lateralDirection: Double,
+        val selfAtFire: BotState,
+        val selfAtFirePrev: BotState?,
+        val enemyAtFire: BotState,
     )
 
     var self: BotState? = null
@@ -112,6 +115,9 @@ internal class GameState {
                         prev.y,
                         directAngleRadians,
                         if (lateralVelocity >= 0.0) 1.0 else -1.0,
+                        ourAtFire,
+                        selfAt(scan.time - 2),
+                        prev,
                     ),
                 )
                 gunHeat = Rules.getGunHeat(energyDrop)

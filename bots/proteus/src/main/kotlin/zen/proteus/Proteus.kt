@@ -47,6 +47,7 @@ abstract class Proteus : AdvancedRobot() {
         val y: Double,
         val power: Double,
         val time: Long,
+        val hitUs: Boolean,
     )
 
     override fun run() {
@@ -67,7 +68,7 @@ abstract class Proteus : AdvancedRobot() {
     private fun tick() {
         gameState.onStatus(time, x, y, headingRadians, velocity, energy, gunHeat)
         for (end in pendingEnemyBulletEnds) {
-            mover.onEnemyBulletAt(end.x, end.y, end.power, end.time)
+            mover.onEnemyBulletAt(end.x, end.y, end.power, end.time, end.hitUs)
         }
         pendingEnemyBulletEnds.clear()
 
@@ -78,7 +79,7 @@ abstract class Proteus : AdvancedRobot() {
             gameState.onScan(scan, gunCoolingRate)
             radar.onScan(Angles.normalizeAbsolute(headingRadians + scan.bearingRadians), controls)
             for (shot in gameState.consumeEnemyShots()) {
-                mover.onEnemyShot(shot)
+                mover.onEnemyShot(shot, field)
             }
         } else {
             radar.search(controls)
@@ -120,7 +121,7 @@ abstract class Proteus : AdvancedRobot() {
 
     override fun onHitByBullet(event: HitByBulletEvent) {
         pendingEnemyBulletEnds.add(
-            EnemyBulletEnd(event.bullet.x, event.bullet.y, event.bullet.power, event.time),
+            EnemyBulletEnd(event.bullet.x, event.bullet.y, event.bullet.power, event.time, true),
         )
     }
 
@@ -131,6 +132,7 @@ abstract class Proteus : AdvancedRobot() {
                 event.hitBullet.y,
                 event.hitBullet.power,
                 event.time,
+                false,
             ),
         )
         mover.onOurBulletEnd(event.bullet.x, event.bullet.y, event.time)

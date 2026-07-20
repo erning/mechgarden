@@ -1,6 +1,6 @@
 package zen.proteus.wave
 
-import zen.proteus.core.Battlefield
+import zen.proteus.move.danger.EnemyWave
 import kotlin.math.abs
 import kotlin.math.atan2
 
@@ -9,23 +9,24 @@ import kotlin.math.atan2
 internal class Waves {
     /** A wave that finished passing us without hitting: the GF interval we covered. */
     class PassedWave(
+        val entry: EnemyWave,
         val gfLo: Double,
         val gfHi: Double,
     )
 
     /** A wave matched to a real bullet, with the bullet's absolute angle. */
     class MatchedWave(
-        val wave: Wave,
+        val entry: EnemyWave,
         val angleRadians: Double,
     )
 
-    private val active = ArrayList<Wave>()
+    private val active = ArrayList<EnemyWave>()
 
     val isActive: Boolean
         get() = active.isNotEmpty()
 
-    fun add(wave: Wave) {
-        active.add(wave)
+    fun add(entry: EnemyWave) {
+        active.add(entry)
     }
 
     fun clear() {
@@ -46,7 +47,8 @@ internal class Waves {
         val passed = ArrayList<PassedWave>()
         val iterator = active.iterator()
         while (iterator.hasNext()) {
-            val wave = iterator.next()
+            val entry = iterator.next()
+            val wave = entry.wave
             val r1 = wave.radius(time)
             val r0 = r1 - wave.speed
             val interval = wave.intersection(prevX, prevY, r0, r1)
@@ -55,7 +57,7 @@ internal class Waves {
             } else if (r1 > wave.distanceTo(prevX, prevY) + WAVE_PASS_MARGIN) {
                 iterator.remove()
                 if (wave.hasVisitInterval) {
-                    passed.add(PassedWave(wave.visitGfLo, wave.visitGfHi))
+                    passed.add(PassedWave(entry, wave.visitGfLo, wave.visitGfHi))
                 }
             }
         }
@@ -72,19 +74,20 @@ internal class Waves {
         power: Double,
         time: Long,
     ): MatchedWave? {
-        var best: Wave? = null
+        var best: EnemyWave? = null
         var bestDiff = Double.POSITIVE_INFINITY
-        for (wave in active) {
+        for (entry in active) {
+            val wave = entry.wave
             if (abs(wave.power - power) > POWER_TOLERANCE) continue
             val diff = abs(wave.distanceTo(x, y) - wave.radius(time))
             if (diff < wave.speed + MATCH_SLACK && diff < bestDiff) {
-                best = wave
+                best = entry
                 bestDiff = diff
             }
         }
         if (best != null) {
             active.remove(best)
-            return MatchedWave(best, atan2(x - best.originX, y - best.originY))
+            return MatchedWave(best, atan2(x - best.wave.originX, y - best.wave.originY))
         }
         return null
     }
@@ -94,9 +97,9 @@ internal class Waves {
         x: Double,
         y: Double,
         time: Long,
-    ): List<Wave> =
+    ): List<EnemyWave> =
         active
-            .sortedBy { it.ticksUntilArrival(it.distanceTo(x, y), time) }
+            .sortedBy { it.wave.ticksUntilArrival(it.wave.distanceTo(x, y), time) }
             .take(MAX_SURFED_WAVES)
 
     private companion object {
@@ -105,7 +108,7 @@ internal class Waves {
         const val POWER_TOLERANCE = 0.01
 
         // Hit events report victim-relative positions, so allow extra slack.
-        const val MATCH_SLACK = Battlefield.ROBOT_HALF_SIZE
+        const val MATCH_SLACK = 18.0
         const val MAX_SURFED_WAVES = 2
     }
 }

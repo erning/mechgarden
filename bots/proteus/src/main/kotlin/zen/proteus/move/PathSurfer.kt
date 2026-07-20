@@ -3,12 +3,12 @@ package zen.proteus.move
 import robocode.Rules
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
-import zen.proteus.move.danger.EmpiricalDanger
+import zen.proteus.move.danger.DangerEstimator
+import zen.proteus.move.danger.EnemyWave
 import zen.proteus.state.BotState
 import zen.proteus.wave.Wave
 import java.util.PriorityQueue
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -56,8 +56,8 @@ internal class PathSurfer(
     fun plan(
         self: BotState,
         enemy: BotState,
-        waves: List<Wave>,
-        dangerModel: EmpiricalDanger,
+        waves: List<EnemyWave>,
+        dangerModel: DangerEstimator,
         shadows: Map<Wave, List<DoubleArray>>,
         orbitDirection: Double,
         time: Long,
@@ -130,9 +130,9 @@ internal class PathSurfer(
         parent: Node,
         option: Int,
         line: Double,
-        waves: List<Wave>,
+        waves: List<EnemyWave>,
         weights: DoubleArray,
-        dangerModel: EmpiricalDanger,
+        dangerModel: DangerEstimator,
         shadows: Map<Wave, List<DoubleArray>>,
         enemy: BotState,
         reused: Boolean,
@@ -148,7 +148,7 @@ internal class PathSurfer(
         var allDone = true
         for (i in waves.indices) {
             if (done[i]) continue
-            val wave = waves[i]
+            val wave = waves[i].wave
             val r1 = wave.radius(simTime)
             val interval = wave.intersection(state.x, state.y, r1 - wave.speed, r1)
             if (interval != null) {
@@ -178,8 +178,7 @@ internal class PathSurfer(
             coveredLo,
             coveredHi,
             done,
-            dangerOf(coveredLo, coveredHi, waves, weights, dangerModel, shadows) +
-                if (abs(state.velocity) < LOW_SPEED_LIMIT) LOW_SPEED_PENALTY else 0.0,
+            dangerOf(coveredLo, coveredHi, waves, weights, dangerModel, shadows, state.x, state.y),
             allDone,
             reused,
         )
@@ -188,28 +187,30 @@ internal class PathSurfer(
     private fun dangerOf(
         coveredLo: DoubleArray,
         coveredHi: DoubleArray,
-        waves: List<Wave>,
+        waves: List<EnemyWave>,
         weights: DoubleArray,
-        dangerModel: EmpiricalDanger,
+        dangerModel: DangerEstimator,
         shadows: Map<Wave, List<DoubleArray>>,
+        evalX: Double,
+        evalY: Double,
     ): Double {
         var danger = 0.0
         for (i in waves.indices) {
             if (coveredLo[i] <= coveredHi[i]) {
-                danger += weights[i] * dangerModel.danger(coveredLo[i], coveredHi[i], shadows[waves[i]])
+                danger += weights[i] * dangerModel.danger(waves[i], evalX, evalY, coveredLo[i], coveredHi[i], shadows[waves[i].wave])
             }
         }
         return danger
     }
 
     private fun waveWeights(
-        waves: List<Wave>,
+        waves: List<EnemyWave>,
         self: BotState,
         time: Long,
     ): DoubleArray {
         val weights = DoubleArray(waves.size)
         for (i in waves.indices) {
-            val wave = waves[i]
+            val wave = waves[i].wave
             weights[i] =
                 (WAVE_WEIGHT_BASE + wave.power) /
                 sqrt(4.0 + max(1.0, wave.ticksUntilArrival(wave.distanceTo(self.x, self.y), time)))
@@ -242,11 +243,5 @@ internal class PathSurfer(
         const val THIRD_WAVE_INDEX = 2
         const val THIRD_WAVE_DISCOUNT = 0.75
         const val REUSE_BIAS = 0.90
-
-        // Per-tick penalty for crawling: near-zero velocity phases (mid-reversal)
-        // are where simple guns actually connect, and the GF danger model does
-        // not price them in.
-        const val LOW_SPEED_LIMIT = 2.0
-        const val LOW_SPEED_PENALTY = 0.05
     }
 }

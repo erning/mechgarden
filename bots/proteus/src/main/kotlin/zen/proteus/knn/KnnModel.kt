@@ -48,6 +48,37 @@ internal class KnnModel(
         includeDidHit: Boolean,
     ): Double {
         if (entries.isEmpty()) return 0.0
+        val neighbors = nearest(query, includeDidHit)
+        if (neighbors.isEmpty()) return 0.0
+        return densityPeak(neighbors)
+    }
+
+    /** Neighbor-weighted density mass over [gfLo, gfHi], normalized to [0, 1]. */
+    fun densityAt(
+        query: DoubleArray,
+        gfLo: Double,
+        gfHi: Double,
+        includeDidHit: Boolean,
+    ): Double {
+        val neighbors = nearest(query, includeDidHit)
+        if (neighbors.isEmpty()) return 0.0
+        var total = 0.0
+        var covered = 0.0
+        for (neighbor in neighbors) {
+            val weight = 1.0 / (0.1 + neighbor.distance)
+            total += weight
+            val overlapLo = max(gfLo, neighbor.entry.gfLo)
+            val overlapHi = min(gfHi, neighbor.entry.gfHi)
+            if (overlapLo < overlapHi) covered += weight
+        }
+        return if (total > 0.0) covered / total else 0.0
+    }
+
+    /** The k nearest entries to [query] by weighted Manhattan distance. */
+    private fun nearest(
+        query: DoubleArray,
+        includeDidHit: Boolean,
+    ): List<Neighbor> {
         val k = min(MAX_NEIGHBORS, max(MIN_NEIGHBORS, entries.size / K_DIVIDER))
         val best = ArrayList<Neighbor>(k + 1)
         for (entry in entries) {
@@ -67,8 +98,7 @@ internal class KnnModel(
                 }
             }
         }
-        if (best.isEmpty()) return 0.0
-        return densityPeak(best)
+        return best
     }
 
     private fun distance(

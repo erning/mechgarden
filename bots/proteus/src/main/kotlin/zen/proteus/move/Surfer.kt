@@ -3,7 +3,8 @@ package zen.proteus.move
 import robocode.Rules
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
-import zen.proteus.move.danger.EmpiricalDanger
+import zen.proteus.move.danger.DangerEstimator
+import zen.proteus.move.danger.EnemyWave
 import zen.proteus.state.BotState
 import zen.proteus.wave.Wave
 import kotlin.math.PI
@@ -30,8 +31,8 @@ internal class Surfer(
     fun choose(
         self: BotState,
         enemy: BotState,
-        waves: List<Wave>,
-        danger: EmpiricalDanger,
+        waves: List<EnemyWave>,
+        danger: DangerEstimator,
         shadows: Map<Wave, List<DoubleArray>>,
         orbitDirection: Double,
         time: Long,
@@ -54,8 +55,8 @@ internal class Surfer(
     private fun simulate(
         self: BotState,
         enemy: BotState,
-        waves: List<Wave>,
-        danger: EmpiricalDanger,
+        waves: List<EnemyWave>,
+        danger: DangerEstimator,
         shadows: Map<Wave, List<DoubleArray>>,
         option: Option,
         orbitDirection: Double,
@@ -76,7 +77,7 @@ internal class Surfer(
             // held before this tick's movement, then move.
             for (i in waves.indices) {
                 if (done[i]) continue
-                val wave = waves[i]
+                val wave = waves[i].wave
                 val r1 = wave.radius(simTime)
                 val interval = wave.intersection(state.x, state.y, r1 - wave.speed, r1)
                 if (interval != null) {
@@ -102,11 +103,12 @@ internal class Surfer(
         var score = 0.0
         for (i in waves.indices) {
             if (coveredLo[i] <= coveredHi[i]) {
-                val wave = waves[i]
+                val entry = waves[i]
+                val wave = entry.wave
                 val weight =
                     (WAVE_WEIGHT_BASE + wave.power) /
                         sqrt(4.0 + max(1.0, wave.ticksUntilArrival(wave.distanceTo(self.x, self.y), time)))
-                score += weight * danger.danger(coveredLo[i], coveredHi[i], shadows[wave])
+                score += weight * danger.danger(entry, state.x, state.y, coveredLo[i], coveredHi[i], shadows[wave])
             }
         }
         return score

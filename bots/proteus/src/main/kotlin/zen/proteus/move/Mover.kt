@@ -1,9 +1,11 @@
 package zen.proteus.move
 
+import zen.proteus.aim.Features
 import zen.proteus.control.Controls
 import zen.proteus.core.Angles
 import zen.proteus.core.Battlefield
-import zen.proteus.move.danger.EmpiricalDanger
+import zen.proteus.move.danger.DangerEstimator
+import zen.proteus.move.danger.EnemyWave
 import zen.proteus.state.BotState
 import zen.proteus.state.GameState
 import zen.proteus.wave.BulletShadows
@@ -12,28 +14,31 @@ import zen.proteus.wave.Waves
 import java.util.Random
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.sign
+import kotlin.math.sin
 
 /**
- * Movement. Enemy shots become expanding waves; while any wave is in flight we
- * surf the nearest ones with [PathSurfer]: a best-first search over per-tick
- * forward / stop / reverse options along the orbit tangent, scored by the
- * covered guess-factor danger (bullet-shadow aware). With no waves we fall back
- * to a distance-band orbit. Danger is learned per enemy and survives round
- * rebuilds via a static registry: real hits and mid-air bullet collisions train
- * the hit bins, waves that pass us train the visit bins.
+ * Movement. Enemy shots become expanding waves (with the feature vector of our
+ * movement at their fire time); while any wave is in flight we surf the nearest
+ * ones against the [DangerEstimator] ensemble — gated, dynamically weighted,
+ * bullet-shadow aware — either with the proven three-option surfer (default) or
+ * the best-first path surfer behind [MOVEMENT_ENGINE]. With no waves we fall
+ * back to a distance-band orbit.
  *
- * Later milestones swap [EmpiricalDanger] for the gated ensemble (M5) behind
- * this same orchestration.
+ * Learned state (estimator ensemble) is kept per enemy in a static registry so
+ * it survives Robocode's per-round robot rebuild.
  */
 internal class Mover {
     private val waves = Waves()
     private val ourBullets = OurBullets()
-    private var danger: EmpiricalDanger? = null
+    private var estimator: DangerEstimator? = null
     private var surfer: Surfer? = null
     private var pathSurfer: PathSurfer? = null
     private var field: Battlefield? = null
     private var orbitDirection = 1.0
     private var lastPlan: PathSurfer.Plan? = null
+    private var lastLatSign = 1.0
+    private var dirChangeTicks = 0
     private val random = Random()
 
     fun onRoundStart() {
@@ -41,20 +46,21 @@ internal class Mover {
         ourBullets.clear()
         orbitDirection = if (random.nextBoolean()) 1.0 else -1.0
         lastPlan = null
-        // danger intentionally survives: it belongs to the per-enemy registry.
+        lastLatSign = 1.0
+        dirChangeTicks = 0
+        // estimator intentionally survives: it belongs to the per-enemy registry.
     }
 
-    fun onEnemyShot(shot: GameState.EnemyShot) {
-        waves.add(
-            Wave(
-                shot.originX,
-                shot.originY,
-                shot.power,
-                shot.time,
-                shot.directAngleRadians,
-                shot.lateralDirection,
-            ),
-        )
+    fun onEnemyShot(
+        shot: GameState.EnemyShot,
+        battlefield: Battlefield,
+    ) {
+        val wave =
+            Wave(shot.originX, shot.originY, shot.power, shot.time, shot.directAngleRadians, shot.lateralDirection)
+        // Features of OUR movement as the enemy saw it at fire time.
+        val features =
+            Features.compute(shot.enemyAtFire, shot.selfAtFire, shot.selfAtFirePrev, wave, battlefield, 0, dirChangeTicks)
+        waves.add(EnemyWave(wave, features, shot.selfAtFire, shot.selfAtFirePrev))
     }
 
     /** One of our bullets just left the barrel. */
@@ -87,9 +93,10 @@ internal class Mover {
         y: Double,
         power: Double,
         time: Long,
+        hitUs: Boolean,
     ) {
         val matched = waves.matchBullet(x, y, power, time) ?: return
-        danger?.recordHit(matched.wave.guessFactor(matched.angleRadians))
+        estimator?.onWaveResolved(matched.entry, matched.entry.wave.guessFactor(matched.angleRadians), hitUs)
     }
 
     fun move(
@@ -101,36 +108,46 @@ internal class Mover {
         time: Long,
         controls: Controls,
     ) {
-        if (danger == null && enemyName != null) {
-            danger = DANGER_REGISTRY.getOrPut(enemyName) { EmpiricalDanger() }
+        if (estimator == null && enemyName != null) {
+            estimator = ESTIMATOR_REGISTRY.getOrPut(enemyName) { DangerEstimator() }
         }
         if (surfer == null) surfer = Surfer(battlefield)
         if (pathSurfer == null) pathSurfer = PathSurfer(battlefield)
         field = battlefield
-        val currentDanger = danger
+        val currentEstimator = estimator
+
+        if (enemy != null) {
+            val bearingRadians = Angles.absoluteBearingRadians(self.x, self.y, enemy.x, enemy.y)
+            val latSign = sign(self.velocity * sin(self.headingRadians - bearingRadians))
+            if (abs(latSign) > 1e-3 && latSign != lastLatSign) {
+                lastLatSign = latSign
+                dirChangeTicks = 0
+            }
+            dirChangeTicks++
+        }
 
         if (selfPrev != null) {
             for (passed in waves.update(selfPrev.x, selfPrev.y, time)) {
-                currentDanger?.recordVisit(passed.gfLo, passed.gfHi)
+                currentEstimator?.onWavePassed(passed.entry)
             }
         }
 
         val surfWaves = waves.surfable(self.x, self.y, time)
-        if (surfWaves.isNotEmpty() && currentDanger != null && enemy != null) {
+        if (surfWaves.isNotEmpty() && currentEstimator != null && enemy != null) {
             ourBullets.prune(battlefield, time)
             val shadows = HashMap<Wave, List<DoubleArray>>(surfWaves.size)
-            for (wave in surfWaves) {
-                shadows[wave] = BulletShadows.intervals(wave, ourBullets.all(), self.x, self.y, time)
+            for (entry in surfWaves) {
+                shadows[entry.wave] = BulletShadows.intervals(entry.wave, ourBullets.all(), self.x, self.y, time)
             }
             when (MOVEMENT_ENGINE) {
                 MovementEngine.THREE_OPTION -> {
-                    val choice = surfer!!.choose(self, enemy, surfWaves, currentDanger, shadows, orbitDirection, time)
+                    val choice = surfer!!.choose(self, enemy, surfWaves, currentEstimator, shadows, orbitDirection, time)
                     orbitDirection = choice.orbitDirection
                     executeSurf(self, enemy, choice, controls)
                 }
 
                 MovementEngine.PATH_SEARCH -> {
-                    val plan = pathSurfer!!.plan(self, enemy, surfWaves, currentDanger, shadows, orbitDirection, time, lastPlan)
+                    val plan = pathSurfer!!.plan(self, enemy, surfWaves, currentEstimator, shadows, orbitDirection, time, lastPlan)
                     orbitDirection = plan.line
                     lastPlan =
                         if (plan.options.size > 1) {
@@ -207,14 +224,14 @@ internal class Mover {
     private companion object {
         const val MAX_AHEAD = 128.0
 
-        // THREE_OPTION (default): the M2 three-option surfer, proven against this
-        // danger model. PATH_SEARCH: best-first path surfing; it threads narrow
-        // danger peaks too eagerly for the crude empirical model and loses in
-        // battle — revisit once the M5 ensemble feeds it.
+        // THREE_OPTION (default): the proven three-option surfer. PATH_SEARCH:
+        // best-first path surfing; it threads narrow danger peaks too eagerly
+        // for a crude danger model — kept for A/B re-evaluation now that the
+        // ensemble exists.
         val MOVEMENT_ENGINE = MovementEngine.THREE_OPTION
 
-        /** Per-enemy learned danger; survives Robocode's per-round robot rebuild. */
-        val DANGER_REGISTRY = HashMap<String, EmpiricalDanger>()
+        /** Per-enemy danger ensembles; survive Robocode's per-round robot rebuild. */
+        val ESTIMATOR_REGISTRY = HashMap<String, DangerEstimator>()
     }
 
     enum class MovementEngine { THREE_OPTION, PATH_SEARCH }

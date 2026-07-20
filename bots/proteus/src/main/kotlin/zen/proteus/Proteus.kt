@@ -1,6 +1,7 @@
 package zen.proteus
 
 import robocode.AdvancedRobot
+import robocode.BulletHitBulletEvent
 import robocode.BulletHitEvent
 import robocode.BulletMissedEvent
 import robocode.HitByBulletEvent
@@ -22,9 +23,10 @@ import java.awt.Color
  * Per-tick pipeline, ordered by data dependency; each subsystem writes only its
  * own channel of [Controls], and the frame is committed once by `execute()`:
  *   1. [GameState] — self snapshot, enemy reconstruction, enemy fire detection
- *   2. [Radar] — infinity lock, or reacquire sweep on ticks without a scan
- *   3. [Mover] — body channel
- *   4. [Aimer] — gun and fire channels
+ *   2. bullet-end events — matched to waves for danger learning
+ *   3. [Radar] — infinity lock, or reacquire sweep on ticks without a scan
+ *   4. [Mover] — body channel (wave updates, then surf or orbit)
+ *   5. [Aimer] — gun and fire channels
  *
  * Movement runs before aiming so later milestones can feed the gun the simulated
  * future position the bullet will actually leave from.
@@ -37,6 +39,15 @@ abstract class Proteus : AdvancedRobot() {
     private lateinit var field: Battlefield
 
     private var pendingScan: ScannedRobotEvent? = null
+    private val pendingEnemyBulletEnds = ArrayList<EnemyBulletEnd>()
+
+    /** An enemy bullet that ended mid-flight (hit us, or collided with ours). */
+    private data class EnemyBulletEnd(
+        val x: Double,
+        val y: Double,
+        val power: Double,
+        val time: Long,
+    )
 
     override fun run() {
         setColors(BODY_COLOR, GUN_COLOR, RADAR_COLOR)
@@ -46,6 +57,7 @@ abstract class Proteus : AdvancedRobot() {
         gameState.onRoundStart()
         radar.onRoundStart()
         mover.onRoundStart()
+        aimer.onRoundStart()
         while (true) {
             tick()
             execute()
@@ -54,21 +66,29 @@ abstract class Proteus : AdvancedRobot() {
 
     private fun tick() {
         gameState.onStatus(time, x, y, headingRadians, velocity, energy, gunHeat)
+        for (end in pendingEnemyBulletEnds) {
+            mover.onEnemyBulletAt(end.x, end.y, end.power, end.time)
+        }
+        pendingEnemyBulletEnds.clear()
+
         val scan = pendingScan
         pendingScan = null
         val controls = Controls(this)
         if (scan != null && scan.time == time) {
             gameState.onScan(scan, gunCoolingRate)
-            val self = gameState.self!!
-            val enemy = gameState.enemy!!
             radar.onScan(Angles.normalizeAbsolute(headingRadians + scan.bearingRadians), controls)
             for (shot in gameState.consumeEnemyShots()) {
-                mover.onEnemyShot()
+                mover.onEnemyShot(shot)
             }
-            mover.move(self, enemy, field, controls)
-            aimer.aim(self, enemy, field, controls)
         } else {
             radar.search(controls)
+        }
+
+        val self = gameState.self!!
+        val enemy = gameState.enemy
+        mover.move(self, gameState.previousSelf(), enemy, gameState.enemyName, field, time, controls)
+        if (scan != null && enemy != null) {
+            aimer.aim(self, enemy, gameState.enemyName, field, controls)
         }
         controls.apply()
     }
@@ -78,7 +98,7 @@ abstract class Proteus : AdvancedRobot() {
     }
 
     override fun onBulletHit(event: BulletHitEvent) {
-        aimer.onBulletHit()
+        aimer.onBulletHit(event.bullet.x, event.bullet.y, event.bullet.power, event.time)
         gameState.noteOurBulletHit(event.bullet.power)
     }
 
@@ -87,7 +107,24 @@ abstract class Proteus : AdvancedRobot() {
     }
 
     override fun onHitByBullet(event: HitByBulletEvent) {
-        // M2: match the bullet to an enemy wave and learn danger from the hit GF.
+        pendingEnemyBulletEnds.add(
+            EnemyBulletEnd(event.bullet.x, event.bullet.y, event.bullet.power, event.time),
+        )
+    }
+
+    override fun onBulletHitBullet(event: BulletHitBulletEvent) {
+        pendingEnemyBulletEnds.add(
+            EnemyBulletEnd(
+                event.hitBullet.x,
+                event.hitBullet.y,
+                event.hitBullet.power,
+                event.time,
+            ),
+        )
+    }
+
+    override fun onHitRobot(event: robocode.HitRobotEvent) {
+        gameState.noteRobotCollision()
     }
 
     private companion object {

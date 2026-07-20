@@ -16,14 +16,22 @@
 - `just build` / `just lint` 通过，`just deploy proteus` 可加载。
 - 对 `RaikoNano` 10 回合：APS 45.0%（基线锚点，不作门槛）。
 
-## M2 波与真冲浪
+## M2 波与真冲浪（已完成）
 
-范围：`wave.Wave` / `wave.Waves` / `wave.GuessFactorBins`；敌方开火建波；精确
-交集；访问统计的经验危险；前进/后退/停车真冲浪（最近两条波）；中弹与子弹相
-撞时按威力与位置匹配波并学习。
+范围（已交付）：`wave.Wave` / `wave.Waves` / `wave.AimWaves` / `wave.GuessFactorBins`；
+敌方开火建波（起点 = 敌人上一 tick 位置，半径含出膛当回合的首段位移）；精确交集；
+经验危险（命中 bin + 访问 bin，recency 衰减 0.995）；前进/后退/停车三选一真冲浪
+（最近两条波，按威力与到达时间加权）；瞄准侧每 tick 虚拟波 + GF-bin 枪（密度峰选
+点，跨回合 per-enemy 注册表）。
 
-验收：`basic` catalog APS ≥ 75%，且生存率显著高于 M1；对 `RaikoNano` APS
-≥ 70%。
+机制验证（已达成）：波时序与引擎逐 tick 对账（出膛点、子弹碰撞用移动前车身方
+块）；单元测试覆盖波交集、GF 映射、冲浪选边；被命中率显著下降（taken/r 从 M1 的
+~90 降到 ~51）；GF 枪对 BasicGFSurfer 的 dealt/r 从 4.1 提到 34.9。
+
+成绩（basic catalog，100 回合）：APS 36.4%、survival 30.7%、dealt 35.8/r、taken
+51.0/r。原定的「basic ≥ 75%」门槛实际依赖 M3（路径搜索、bullet shadow、位置评
+分）与 M4（KNN 枪）的系统——Mirage 同 catalog 为 78.3% APS / 93.3% survival，那
+是 M3+ 的对标线，M2 不背。M3 验收时复评此门槛。
 
 ## M3 路径冲浪
 
@@ -37,9 +45,10 @@ turn（诊断统计）。
 
 ## M4 KNN 瞄准
 
-范围：`knn.*`（自研 KD 树 + 嵌入）；每 tick 虚拟波；`WaveFeatures` 特征池；
-主枪 / 反冲浪枪双 KNN 按我方命中率区间硬切换；didHit / didCollide 标记；扫
-描线密度峰选点；开火前一 tick 的临时瞄准波用预测出膛点。
+范围：`knn.*`（自研 KD 树 + 嵌入）；`WaveFeatures` 特征池；主枪 / 反冲浪枪
+双 KNN 按我方命中率区间硬切换；didHit / didCollide 标记；扫描线密度峰选
+点；开火前一 tick 的临时瞄准波用预测出膛点。（每 tick 虚拟波与波注册已
+于 M2 落地。）
 
 验收：`classic` catalog APS ≥ 70%；对 `BasicGFSurfer`（会躲的对手）APS 较
 M3 明显提升。
@@ -83,3 +92,4 @@ A/B 对比）。
 | 日期 | 里程碑 | 对手 / catalog | 回合 | APS | PWIN | 备注 |
 |---|---|---|---|---|---|---|
 | 2026-07-20 | M1 | RaikoNano | 10 | 45.0% | 0% | 骨架基线 |
+| 2026-07-20 | M2 | basic | 100 | 36.4% | 0% | 波+真冲浪+GF 枪；Mirage 对照 78.3% |

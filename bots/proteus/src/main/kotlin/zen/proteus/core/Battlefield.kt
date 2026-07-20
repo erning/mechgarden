@@ -59,6 +59,6 @@ internal class Battlefield(
         const val WALL_MARGIN = ROBOT_HALF_SIZE + 2.0
         const val STICK_LENGTH = 160.0
         val SMOOTH_STEP_RADIANS: Double = Math.toRadians(5.0)
-        const val MAX_SMOOTH_STEPS = 18
+        const val MAX_SMOOTH_STEPS = 36
     }
 }

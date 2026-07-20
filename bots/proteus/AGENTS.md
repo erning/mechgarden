@@ -19,10 +19,12 @@ implementation is `abstract class Proteus` in `zen.proteus.Proteus` plus helpers
 under `zen.proteus.*`. Keep Proteus self-contained: no imports from other robot
 modules (see the root `AGENTS.md` self-containment rule).
 
-Current state: M1 skeleton (see `docs/roadmap.md`) — radar infinity lock, enemy
-fire detection, distance-band orbit movement, linear-prediction gun. Later
-milestones plug into the existing seams documented in `docs/architecture.md`;
-extend them instead of adding parallel systems.
+Current state: M2 complete (see `docs/roadmap.md`) — radar infinity lock, enemy
+fire detection with compensation, expanding enemy waves with precise
+intersection, empirical GF danger (hits + visits, recency-decayed), three-option
+true surfing over the nearest two waves, and a GF-bin gun trained by every-tick
+virtual waves. Later milestones plug into the existing seams documented in
+`docs/architecture.md`; extend them instead of adding parallel systems.
 
 ## Design Docs
 

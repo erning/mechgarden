@@ -37,8 +37,12 @@
 | `control.Controls` | 每 tick 指令帧；各子系统只写自己的通道；`apply()` 统一发出 | M1 |
 | `radar.Radar` | 冷启动全场扫描、infinity lock、丢锁重搜 | M1 |
 | `move.Mover` | 移动主控：轨道移动（M1）→ 波冲浪（M2/M3） | M1 起 |
-| `aim.Aimer` | 瞄准主控：线性预测枪（M1）→ KNN 枪组（M4） | M1 起 |
+| `move.Surfer` / `move.MovementSim` | 三选一真冲浪；候选路径逐 tick 精确模拟 | M2 |
+| `move.danger.EmpiricalDanger` | 命中 + 访问的经验危险（recency 衰减） | M2 |
+| `aim.Aimer` | 瞄准主控：GF-bin 枪（M2）→ KNN 枪组（M4） | M1 起 |
+| `aim.GfProfile` | 敌人移动 GF 轮廓（虚拟波训练，密度峰选点） | M2 |
 | `wave.Wave` / `wave.Waves` | 波：推进、精确交集、GF 换算、bullet shadow 计算；注册与事件匹配 | M2 |
+| `wave.AimWaves` | 瞄准用波注册（每 tick 虚拟波 + 实弹波） | M2 |
 | `wave.GuessFactorBins` | 151 bin 密度：区间覆盖、指数核平滑 | M2 |
 | `wave.WaveFeatures` | 建波时的原始特征池（瞄准/移动共用） | M4 |
 | `move.PathSurfer` | 路径空间 best-first 搜索（计划复用、启发剪枝、三波深度） | M3 |

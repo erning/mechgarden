@@ -2,7 +2,7 @@
 
 > 给下一个接手的人（或下一个会话）：本文件说明 MechGarden 工作区里
 > `zen.Proteus` 机器人的目标、当前进度、架构、经验教训与下一步工作。
-> 最后更新：M5 完成（commit `290666a`）。
+> 最后更新：M8 完成（commit `e69b5f4`）。
 
 ## 1. 项目与目标
 
@@ -17,7 +17,7 @@ MechGarden 是 Robocode classic 1.11.0 的 Kotlin/JVM 工作区。`bots/proteus`
 - 命令：`just build` / `just lint` / `just fmt` / `just deploy proteus` /
   `just duel -r Proteus -c basic -n 100`
 
-## 2. 当前进度（M1–M5 已完成）
+## 2. 当前进度（M1–M8 已完成）
 
 | 里程碑 | 内容 | basic APS（100 回合） |
 |---|---|---|
@@ -25,13 +25,16 @@ MechGarden 是 Robocode classic 1.11.0 的 Kotlin/JVM 工作区。`bots/proteus`
 | M2 | 敌波 + 精确交集 + 经验危险 + 三选一真冲浪 + GF-bin 枪（虚拟波训练） | 36.4% |
 | M3 | bullet shadow 常驻；PathSurfer 建成但**默认禁用**（见 §5.4） | 37.3% |
 | M4 | KNN 双枪（主枪/反冲浪枪硬切换，didHit 标记） | 46.1% |
-| M5 | 危险集成：门控 + 动态权重（hit bins、flattener、模拟枪、CurrentGF、KNN 危险） | **58.8%，PWIN 100%** |
+| M5 | 危险集成：门控 + 动态权重 | **58.8%，PWIN 100%** |
+| M6 | 守卫式威力 + 计划关联主动阴影 | 59.0%，PWIN 100% |
+| M7 | 策略层（anti-HOT/ram/mirror）+ 残局收割 + 在线分类子弹护盾 | 专项 60-76%，PWIN 全 100% |
+| M8 | 离线训练闭环（采集/训练/回读/验证），首轮嵌入打平 | 56.1% |
 
 classic catalog（RaikoMX / Lacrimas / BlestPain）：M5 后 40.9%。对照基线：
 Mirage 同 basic 为 78.3% APS / 93.3% survival。主要差距仍在**防守**
 （taken/r 40.5 vs Mirage 24.8）。
 
-下一步是 **M6 得分系统**（见 §4）。
+里程碑 M1–M8 已全部完成。基线：basic ~57%、classic ~37%、expert 34.8%、top 16.1%（DrussGT 18.1 / ScalarR 15.0 / BeepBoop 15.2）。
 
 ## 3. 架构速览
 
@@ -58,24 +61,18 @@ Mirage 同 basic 为 78.3% APS / 93.3% survival。主要差距仍在**防守**
   不写 Robocode 数据文件。
 - 单元测试用 kotlin.test（core 数学、波、危险、冲浪、KNN 都有覆盖）。
 
-## 4. 下一步：M6 得分系统
+## 4. 下一步方向
 
-范围（roadmap.md 有验收口径）：
+按价值排序（详见 `bots/proteus/docs/roadmap.md` 与 `docs/training.md`）：
 
-1. **`aim.FirePower`** — 期望得分威力选择。权重依据
-   `docs/robocode-scoring.md`：伤害分 1:1、子弹击杀奖励 +20%、存活分 50。
-   能量赛跑模型：双方按估计命中率持续开火，估计 `score = dealt × (1 +
-   0.2 × P(击杀)) + 50 × P(胜)`，选最大者。命中率用 Beta(1,11) 先验，敌
-   命中率封顶 15% 并假设我方不更差。涌现行为应有：落后打重弹、残血恰好
-   击杀威力、贴脸全开、领先且低能量时保能量。
-2. **`aim.ShadowAim`** — 开火瞬间候选角联合评分：命中概率 ÷（新阴影下
-   危险）^k，k 随敌我命中率比与威力比变化。需要我方当前移动计划的覆盖
-   区间（冲浪选择）与 `BulletShadows` 对假想子弹的阴影计算。
-3. 残局：低能量领先时打「能量差 − 0.11」甚至停火；永远保留 ~0.05 能量。
-
-注意 `DangerEstimator.enemyHitRate` 已在 M5 备好（门控同一个对象），
-`Mover.enemyAvgPower()` 没有——M6 需要在 Mover 里加滚动均值并经 Proteus
-传给 Aimer（M6 第一次尝试在这里写乱被回滚了，重做时小步提交）。
+1. **更大的数据集 → 更好的嵌入**：expert/top 对手也采集（
+   `scripts/collect_dataset.py -c expert top`），样本量上去后重训
+   `Features.WEIGHTS`；进一步按对手分训专家嵌入。
+2. **危险模型权重离线化**：把 M8 的训练器复用到 `DangerEstimator` 的模型
+   权重与门控阈值。
+3. **PathSurfer 排查**（仍禁用，`Mover.MOVEMENT_ENGINE`）：需逐 tick 遥测
+   查重规划抖动，不要盲开。
+4. **top tier 推进**：top 目前 16.1%，缺口仍在防守（taken/r ~49）。
 
 ## 5. 经验教训（别再踩一遍）
 
@@ -105,8 +102,8 @@ Mirage 同 basic 为 78.3% APS / 93.3% survival。主要差距仍在**防守**
 
 ## 6. 仓库状态
 
-- `master` HEAD：`991057f`（refs 目录更新）；Proteus 最新：`290666a`（M5）。
+- Proteus 最新：`e69b5f4`（M8）。
 - 参考机器人已部署在 `robocode/robots/`（basic/classic 可直接 duel；
   `top` catalog 含 BeepBoop 本体）。
 - Proteus 版本号：`bots/proteus/src/main/resources/zen/Proteus.properties`
-  （M5 = 0.5.0；M6 完成后 bump）。
+  （当前 0.8.0）。
